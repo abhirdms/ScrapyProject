@@ -107,7 +107,7 @@ class GeraldEveSpider(scrapy.Spider):
     # ===============================
     # FIELD METHODS
     # ===============================
-    def get_listing_url(self, item):
+    def get_listing_url(self, item):        
         return item.get("show_link")
 
     def get_display_address(self, item):
@@ -129,32 +129,53 @@ class GeraldEveSpider(scrapy.Spider):
     def get_property_images(self, item):
         images = []
         if item.get("photo_url"):
-            images.append(item["photo_url"].strip())
+            images.append(item["photo_url"])
         if item.get("large_thumbnail_url"):
-            images.append(item["large_thumbnail_url"].strip())
+            images.append(item["large_thumbnail_url"])
         return images
 
-    def get_description(self, item):
+    def get_description(self, item): #need to check this how we can get it call the api to get the html
         value = item.get("photo_description")
         return value.strip() if value else None
 
-    def get_size_sqft(self, item):
+    def get_size_sqft(self, item):  #need to check this how we can get it call the api to get the html
         return self.extract_numeric(item.get("size_summary"))
 
-    def get_size_acres(self, item):
+    def get_size_acres(self, item):  #need to check this how we can get it call the api to get the html
         return None
 
     def get_postcode(self, item):
-        # Try extracting from address first (most reliable)
         value = item.get("zip")
-        return self.extract_postcode(value)
+        postcode = self.extract_postcode(value)
+        if postcode:
+            return postcode
+
+        address_lines = item.get("address_three_line", [])
+        if isinstance(address_lines, list):
+            combined_address = " ".join(address_lines)
+            postcode = self.extract_postcode(combined_address)
+            if postcode:
+                return postcode
+
+
+        value = item.get("display_name")
+        postcode = self.extract_postcode(value)
+        if postcode:
+            return postcode
+
+        value = item.get("name")
+        postcode = self.extract_postcode(value)
+        if postcode:
+            return postcode
+
+        return None
 
     def get_brochure_url(self, item):
         value = item.get("pdf_url")
         return value.strip() if value else None
 
     def get_agent_company(self, item):
-        return "LSH"
+        return "Gerald Eve"
 
     def get_agent_name(self, item):
         agent = self.get_primary_agent(item)
@@ -162,8 +183,7 @@ class GeraldEveSpider(scrapy.Spider):
         return value.strip() if value else None
 
     def get_agent_city(self, item):
-        value = item.get("city")
-        return value.strip() if value else None
+       return None
 
     def get_agent_email(self, item):
         agent = self.get_primary_agent(item)
@@ -176,12 +196,10 @@ class GeraldEveSpider(scrapy.Spider):
         return value.strip() if value else None
 
     def get_agent_street(self, item):
-        value = item.get("address")
-        return value.strip() if value else None
+        return None
 
     def get_agent_postcode(self, item):
-        value = item.get("zip")
-        return self.extract_postcode(value)
+        return None
 
     def get_tenure(self, item):
         return "Freehold" if item.get("sale") else "Leasehold"
@@ -216,8 +234,18 @@ class GeraldEveSpider(scrapy.Spider):
     def extract_numeric_price(self, text):
         if not text:
             return None
-        nums = re.findall(r"\d+", text.replace(",", ""))
-        return int(nums[0]) if nums else None
+        text = str(text)
+        text = text.lower()
+        text = text.replace(",", "")
+        text = re.sub(r"(to|upto|–|—)", "-", text)
+        numbers = re.findall(r"\d+", text)
+
+        if not numbers:
+            return None
+
+        prices = [int(n) for n in numbers]
+        return min(prices)
+
 
     def extract_numeric(self, text):
         if not text:
