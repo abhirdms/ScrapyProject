@@ -3,7 +3,7 @@ from lxml import html
 import re
 from utils import store_data_to_csv
 
-
+CSV_FILE_NAME="data/data.csv"
 
 class BuildOutScraper:
     BASE_URL = (
@@ -46,10 +46,8 @@ class BuildOutScraper:
 
             page += 1
 
-            if page == 4:
-                break
         if self.results:
-            store_data_to_csv(self.results, "data/data2.csv")
+            store_data_to_csv(self.results,CSV_FILE_NAME)
 
 
         return self.results
@@ -79,9 +77,6 @@ class BuildOutScraper:
             "tenure": "Freehold" if item.get("sale") else "Leasehold",
             "saleType": "For Sale" if item.get("sale") else "To Let",
         }
-        print("+"*10)
-        print(obj)
-        print("*"*10)
         return obj
     
 
