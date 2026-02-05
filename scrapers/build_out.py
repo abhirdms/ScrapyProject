@@ -3,8 +3,6 @@ from lxml import html
 import re
 from utils import store_data_to_csv
 
-# Output CSV file path
-CSV_FILE_NAME = "data/data.csv"
 
 
 class BuildOutScraper:
@@ -58,10 +56,7 @@ class BuildOutScraper:
 
             page += 1
 
-        # Save to CSV if data exists
-        if self.results:
-            store_data_to_csv(self.results, CSV_FILE_NAME)
-
+  
         return self.results
 
     def parse_item(self, item):
@@ -72,7 +67,7 @@ class BuildOutScraper:
         description = self.get_detailed_description(item.get("show_link"))
 
         # Extract size in square feet (numeric)
-        size_ft = self.extract_size_ft_from_text(item, description)
+        size_ft, size_ac = self.extract_size(item, description)
 
         obj = {
             # listingUrl: link to the property
@@ -99,9 +94,7 @@ class BuildOutScraper:
 
             # sizeFt: property size in square feet
             "sizeFt": size_ft,
-
-            # sizeAc: property size in acres
-            "sizeAc": self.get_size_ac(size_ft, description),
+            "sizeAc": size_ac,
 
             # postalCode: UK postcode extracted from multiple sources
             "postalCode": self.get_postcode(item),
@@ -159,7 +152,7 @@ class BuildOutScraper:
             if label.lower() == "price":
                 return self.extract_numeric_price(value)
 
-        return None
+        return ""
 
     def extract_numeric_price(self, text):
         """
@@ -169,7 +162,7 @@ class BuildOutScraper:
         - Comma-separated values
         """
         if not text:
-            return None
+            return ""
 
         raw = str(text).lower()
 
@@ -180,14 +173,14 @@ class BuildOutScraper:
             "upon application",
             "on application",
         ]):
-            return None
+            return ""
 
         raw = raw.replace(",", "")
         raw = re.sub(r"(to|upto|–|—)", "-", raw)
 
         numbers = re.findall(r"\d+", raw)
         if not numbers:
-            return None
+            return ""
 
         # Return minimum price if range
         return min(int(n) for n in numbers)
@@ -250,107 +243,88 @@ class BuildOutScraper:
 
         except Exception:
             return ""
-
-    def get_size_ac(self, size_ft, description):
+    
+    def extract_size(self, item, text):
         """
-        Returns size in acres.
-        Priority:
-        1) Convert from sizeFt
-        2) Extract acres directly from text
-        """
-        if size_ft:
-            return round(size_ft / 43560, 3)
-
-        return self.extract_size_ac_from_text(description)
-
-    def extract_size_ac_from_text(self, text):
-        """
-        Extracts acreage values directly from text
-        and returns minimum if range
-        """
-        if not text:
-            return None
-
-        text = text.lower().replace(",", "")
-        pattern = r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*(acres?|ac)'
-
-        matches = re.findall(pattern, text)
-        if not matches:
-            return None
-
-        values = []
-        for m in matches:
-            start = float(m[0])
-            end = float(m[1]) if m[1] else None
-            values.append(start if not end else min(start, end))
-
-        return min(values) if values else None
-
-    def extract_size_ft_from_text(self, item, text):
-        """
-        Extracts size in square feet.
-        Priority:
-        1) size_summary field
-        2) size_summary with units
-        3) description text
+        Returns (sizeFt, sizeAc)
+        Rules:
+        - sq ft / sqm → sizeFt
+        - acres / hectares → sizeAc
         """
         size_summary = item.get("size_summary")
 
-        if size_summary is not None:
-            raw = str(size_summary).replace(",", "").strip()
-            if raw.isdigit():
-                return int(raw)
+        # 1️numeric-only fallback (assume sq ft)
+        if size_summary and str(size_summary).strip().isdigit():
+            return int(size_summary), ""
 
-        size_ft = self._extract_sqft_with_units(size_summary)
-        if size_ft:
-            return size_ft
+        # 2️combine all possible text
+        combined_text = " ".join(
+            t for t in [
+                str(size_summary) if size_summary else "",
+                str(text) if text else ""
+            ] if t
+        )
 
-        return self._extract_sqft_with_units(text)
+        # normalize text ONCE
+        combined_text = (
+            combined_text
+            .replace("m²", "m2")
+            .replace("㎡", "m2")
+            .lower()
+            .replace(",", "")
+        )
 
-    def _extract_sqft_with_units(self, text):
-        """
-        Supports:
-        - sq ft / sf
-        - sqm / m²
-        - hectares
-        - acres
-        Returns minimum sqft value if range
-        """
-        if not text:
-            return None
+        # ---------- SQ FT ----------
+        sqft_pattern = (
+            r'\b(\d+(?:\.\d+)?)'
+            r'(?:\s*(?:-|to)\s*(\d+(?:\.\d+)?))?'
+            r'\s*(sq\.?\s*ft|sqft|square\s*feet|sf)\b'
+        )
+        m = re.search(sqft_pattern, combined_text)
+        if m:
+            start = float(m.group(1))
+            end = float(m.group(2)) if m.group(2) else ""
+            return int(min(start, end)) if end else int(start), ""
 
-        text = str(text).lower().replace(",", "")
-        values_sqft = []
+        # ---------- SQ METERS → SQ FT ----------
+        sqm_pattern = (
+            r'\b(\d+(?:\.\d+)?)'
+            r'(?:\s*(?:-|to)\s*(\d+(?:\.\d+)?))?'
+            r'\s*(sqm|sq\.?\s*m|m2|square\s*met(?:er|re)s)\b'
+        )
+        m = re.search(sqm_pattern, combined_text)
+        if m:
+            start = float(m.group(1)) * 10.7639
+            end = float(m.group(2)) * 10.7639 if m.group(2) else ""
+            return int(min(start, end)) if end else int(start), ""
 
-        # SQ FT
-        sqft_pattern = r'\b(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*(sq\.?\s*ft\.?|sqft|square\s*feet|sf|s\.?f\.?)\b'
-        for start, end, _ in re.findall(sqft_pattern, text):
-            start = float(start)
-            end = float(end) if end else None
-            values_sqft.append(start if not end else min(start, end))
+        # ---------- ACRES ----------
+        acre_pattern = (
+            r'\b(\d+(?:\.\d+)?)'
+            r'(?:\s*(?:-|to)\s*(\d+(?:\.\d+)?))?'
+            r'\s*(acres?|acre|ac)\b'
+        )
+        m = re.search(acre_pattern, combined_text)
+        if m:
+            start = float(m.group(1))
+            end = float(m.group(2)) if m.group(2) else ""
+            return "", round(min(start, end) if end else start, 3)
 
-        # SQ METERS → SQ FT
-        sqm_pattern = r'\b(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*(sqm|sq\.?\s*m\.?|m²|m2|square\s*met(?:er|re)s)\b'
-        for start, end, _ in re.findall(sqm_pattern, text):
-            start = float(start) * 10.7639
-            end = float(end) * 10.7639 if end else None
-            values_sqft.append(start if not end else min(start, end))
+        # ---------- HECTARES → ACRES ----------
+        hectare_pattern = (
+            r'\b(\d+(?:\.\d+)?)'
+            r'(?:\s*(?:-|to)\s*(\d+(?:\.\d+)?))?'
+            r'\s*(hectares?|ha)\b'
+        )
+        m = re.search(hectare_pattern, combined_text)
+        if m:
+            start = float(m.group(1)) * 2.47105
+            end = float(m.group(2)) * 2.47105 if m.group(2) else ""
+            return "", round(min(start, end) if end else start, 3)
 
-        # HECTARES → SQ FT
-        hectare_pattern = r'\b(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*(hectares?|ha|ha\.?)\b'
-        for start, end, _ in re.findall(hectare_pattern, text):
-            start = float(start) * 107639
-            end = float(end) * 107639 if end else None
-            values_sqft.append(start if not end else min(start, end))
 
-        # ACRES → SQ FT
-        acre_pattern = r'\b(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*(acres?|acre|ac)\b'
-        for start, end, _ in re.findall(acre_pattern, text):
-            start = float(start) * 43560
-            end = float(end) * 43560 if end else None
-            values_sqft.append(start if not end else min(start, end))
+        return "", ""
 
-        return int(min(values_sqft)) if values_sqft else None
 
     def get_property_images(self, item):
         # Returns list of available image URLs
@@ -413,4 +387,4 @@ class BuildOutScraper:
     def extract_numeric(self, text):
         # Generic numeric extractor
         nums = re.findall(r"\d+", str(text).replace(",", ""))
-        return int(nums[0]) if nums else None
+        return int(nums[0]) if nums else ""

@@ -7,5 +7,6 @@ Contains the list of scraper modules to run.
 # Each scraper should be in the 'scrapers' directory
 SCRAPERS = [
     # "knight_commercial", 
-    "build_out",
+    # "build_out",
+    "glanmor_property",
 ]
