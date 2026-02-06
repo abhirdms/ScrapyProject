@@ -9,5 +9,6 @@ SCRAPERS = [
     # "knight_commercial", 
     # "build_out",
     # "glanmor_property",
-    "glinsman_weller",
+    # "glinsman_weller",
+    "goldenberg_real_estate",
 ]
