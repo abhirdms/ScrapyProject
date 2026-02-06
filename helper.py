@@ -8,5 +8,6 @@ Contains the list of scraper modules to run.
 SCRAPERS = [
     # "knight_commercial", 
     # "build_out",
-    "glanmor_property",
+    # "glanmor_property",
+    "glinsman_weller",
 ]

@@ -3,8 +3,9 @@ import re
 from lxml import html
 from utils import store_data_to_csv
 
-class GlanmorPropertyScraper:
-    BASE_SEARCH = "https://glanmorproperty.co.uk/search-results/"
+
+class GlinsmanWellerScraper:
+    BASE_SEARCH = "https://www.glinsmanweller.co.uk/current-disposals/"
 
     HEADERS = {
         "User-Agent": (
@@ -17,11 +18,12 @@ class GlanmorPropertyScraper:
     def __init__(self):
         self.results = []
 
+    # ---------------- RUN ---------------- #
+
     def run(self):
         page = 1
 
         while True:
-
             url = self._build_page_url(page)
 
             resp = requests.get(url, headers=self.HEADERS, timeout=30)
@@ -29,8 +31,10 @@ class GlanmorPropertyScraper:
                 break
 
             tree = html.fromstring(resp.text)
+
+            # OUTER PAGE
             listing_urls = tree.xpath(
-                "//div[contains(@class,'item-listing-wrap')]//h2[@class='item-title']/a/@href"
+                "//h3[contains(@class,'card-title')]/a/@href"
             )
 
             if not listing_urls:
@@ -39,122 +43,146 @@ class GlanmorPropertyScraper:
             for link in listing_urls:
                 try:
                     self.results.append(self.parse_listing(link))
+
                 except Exception:
                     continue
+            break
 
-            page += 1
         return self.results
 
     def _build_page_url(self, page):
-        if page == 1:
-            return self.BASE_SEARCH
-        return f"{self.BASE_SEARCH}page/{page}/"
+        # Site has no pagination but keeping SAME STRUCTURE
+        return self.BASE_SEARCH
+
+    # ---------------- LISTING ---------------- #
 
     def parse_listing(self, url):
         resp = requests.get(url, headers=self.HEADERS, timeout=30)
         tree = html.fromstring(resp.text)
 
+        description = self.get_description(tree)
+
         size_ft, size_ac = self.extract_size(tree)
 
+        images = tree.xpath(
+            "//div[contains(@class,'elementor-gallery__container')]//a[contains(@class,'e-gallery-item')]/@href"
+        )
 
-        title = self._clean(" ".join(tree.xpath(
-            "//div[contains(@class,'property-title-price-wrap')]//div[@class='page-title']/h1/text()[normalize-space()]"
-        )))
+        if not images:
+            images = tree.xpath(
+                "//div[contains(@class,'elementor-widget-container')]//a/@href"
+            )
 
-
-        address = self._clean(" ".join(tree.xpath(
-            "//div[@class='container']/address[@class='item-address']/text()[normalize-space()]"
-        )))
-
-        sale_type = self._clean(" ".join(tree.xpath(
-            "//li[strong[text()='Property Status:']]/span/text()"
+        display_address = self._clean(" ".join(tree.xpath(
+            "//div[@class='elementor-widget-container']/h1/text()"
         )))
 
         obj = {
             "listingUrl": url,
-            "displayAddress": address,
-            "price": self.get_price(tree, sale_type),
-            "propertySubType": self._clean(" ".join(tree.xpath(
-                "//li[normalize-space()='Property Type']/preceding-sibling::li[1]/strong/text()"
-            ))),
-            "propertyImage": self.get_property_images(tree),#need to check
-            "detailedDescription": self.get_description(tree),
+
+            "displayAddress": display_address,
+
+            "price": "", #not working currectly no connectin with sale type
+
+            "propertySubType": "",
+
+            "propertyImage": list(dict.fromkeys(images)),
+
+
+            "detailedDescription": description,
+
             "sizeFt": size_ft,
             "sizeAc": size_ac,
-            "postalCode": self.extract_postcode(address) if address else self.extract_postcode(title),
+
+            "postalCode": self.extract_postcode(display_address),
+
             "brochureUrl": self._clean(" ".join(tree.xpath(
-                "//div[contains(@class,'property-documents')]//a/@href"
+                "//a[text()='Brochure' and contains(@href,'.pdf')]/@href"
             ))),
-            "agentCompanyName": "Glanmor Property",
+
+            "agentCompanyName": "Glinsman Weller",
             "agentName": "",
+
             "agentCity": "",
+
             "agentEmail": "",
+
             "agentPhone": "",
+
             "agentStreet": "",
             "agentPostcode": "",
+
             "tenure": self.get_tenure(tree),
-            "saleType": "For Sale" if "sale" in sale_type.lower() else "To Let",
+
+            "saleType": self.get_sale_type(tree),
         }
+
         return obj
 
     # ------------- helpers ------------ #
 
-    def get_price(self, tree, sale_type):
-        if "rent" in sale_type.lower():
+    def get_sale_type(self, tree):
+        text = self._clean(" ".join(tree.xpath(
+            "//div[@class='homebadge']/text()"
+        ))).lower()
+
+        if not text:
             return ""
 
-        text = self._clean(" ".join(tree.xpath(
-            "//li[@class='item-price item-price-text price-single-listing-text']/text()"
-        )))
+        if "sale" in text:
+            return "For Sale"
 
-        return self.extract_numeric_price(text)
-    
-    def get_property_images(self, tree):
-        """
-        Extract all gallery images.
-        Supports lazy-loaded images (data-src / data-lazy).
-        Returns a list of unique image URLs.
-        """
-        images = tree.xpath("//div[@id='property-gallery-js']//img")
+        if "to let " in text:
+            return "To Let"
 
-        urls = []
-        for img in images:
-            url = (
-                img.get("src")
-                or img.get("data-src")
-                or img.get("data-lazy")
-            )
+        return ""
 
-            if url and url not in urls:
-                urls.append(url)
-
-        return urls
 
 
     def get_description(self, tree):
         texts = tree.xpath(
-            "//div[@class='block-content-wrap']/p[not(ancestor::div[contains(@class,'property-documents')])]//text()"
+            "//div[@data-widget_type='theme-post-content.default']//p//text()"
         )
         return " ".join(t.strip() for t in texts if t.strip())
-    
-
-
 
     def get_tenure(self, tree):
-        text = " ".join(tree.xpath("//p//text()")).lower()
+        text = " ".join(tree.xpath(
+            "//div[@data-widget_type='theme-post-content.default']//p//text()"
+        )).lower()
+
         if "freehold" in text:
             return "Freehold"
         elif "leasehold" in text:
             return "Leasehold"
         return ""
 
-    def _clean(self, val):
-        return val.strip() if val else ""
+    def extract_size(self, tree):
+        text = " ".join(tree.xpath(
+            "//div[@class='row']//div[contains(text(),'sq ft') or contains(text(),'acre')]//text()"
+        ))
+
+        if not text:
+            return "", ""
+
+        text = text.lower().replace(",", "")
+
+        size_ft = ""
+        size_ac = ""
+
+        # -------- SQ FT (ONLY IF PRESENT) --------
+        m = re.search(r'(\d+(?:\.\d+)?)\s*sq\s*ft', text)
+        if m:
+            size_ft = int(float(m.group(1)))
+
+        # -------- ACRES (ONLY IF PRESENT, NO CONVERSION) --------
+        m = re.search(r'(\d+(?:\.\d+)?)\s*(acres?|acre|ac)\b', text)
+        if m:
+            size_ac = round(float(m.group(1)), 4)
+
+        return size_ft, size_ac
+
 
     def extract_postcode(self, text):
-        """
-        Extract UK postcode (FULL or PARTIAL)
-        """
         if not text:
             return ""
 
@@ -163,131 +191,7 @@ class GlanmorPropertyScraper:
 
         text = text.upper()
         match = re.search(FULL, text) or re.search(PARTIAL, text)
+        return match.group().strip() if match else ""
 
-        return match.group().upper().strip() if match else ""
-
-
-    def extract_numeric_price(self , text):
-        """
-        Convert any price text to a numeric value.
-
-        Handles:
-        - POA / On Application / Subject to Offer
-        - Price ranges (returns minimum)
-        - Comma-separated values
-        - Currency symbols (£, $, €)
-        - Per annum / pcm / pw text noise
-
-        Returns:
-        - int (minimum price)
-        - "" if price is not explicitly provided
-        """
-
-        if not text:
-            return ""
-
-        raw = str(text).lower()
-
-        # -------- ignore non-priced listings --------
-        ignore_phrases = [
-            "subject to offer",
-            "price on application",
-            "upon application",
-            "on application",
-            "poa",
-            "tbc",
-            "ask agent",
-        ]
-
-        if any(p in raw for p in ignore_phrases):
-            return ""
-
-        # -------- normalize text --------
-        raw = raw.replace(",", "")
-        raw = raw.replace("£", "").replace("$", "").replace("€", "")
-        raw = re.sub(r"(per annum|pa|p\.a\.|pcm|pw|per week|per month)", "", raw)
-
-        # normalize ranges: to / – / —
-        raw = re.sub(r"(to|upto|–|—)", "-", raw)
-
-        # -------- extract numbers --------
-        numbers = re.findall(r"\d+", raw)
-        if not numbers:
-            return ""
-
-        # return minimum if range
-        return min(int(n) for n in numbers)
-    
-    
-    def extract_size(self, tree):
-        """
-        If both Property Size and Land Area exist:
-        → return BOTH sizeFt and sizeAc
-        """
-
-        text = " ".join(tree.xpath(
-            "//li[.//strong[contains(text(),'Property Size') or contains(text(),'Land Area')]]//span/text()"
-        ))
-
-        if not text:
-            return "", ""
-
-        text = (
-            text.lower()
-            .replace(",", "")
-            .replace("m²", "m2")
-            .replace("㎡", "m2")
-        )
-
-        size_ft = ""
-        size_ac = ""
-
-        # ---------- SQ FT ----------
-        sqft_pattern = (
-            r'\b(\d+(?:\.\d+)?)'
-            r'(?:\s*(?:-|to)\s*(\d+(?:\.\d+)?))?'
-            r'\s*(sq\.?\s*ft|sqft|sf)\b'
-        )
-        m = re.search(sqft_pattern, text)
-        if m:
-            start = float(m.group(1))
-            end = float(m.group(2)) if m.group(2) else ""
-            size_ft = int(min(start, end)) if end else int(start)
-
-        # ---------- SQ METERS → SQ FT ----------
-        sqm_pattern = (
-            r'\b(\d+(?:\.\d+)?)'
-            r'(?:\s*(?:-|to)\s*(\d+(?:\.\d+)?))?'
-            r'\s*(sqm|m2|square\s*met(?:er|re)s)\b'
-        )
-        m = re.search(sqm_pattern, text)
-        if m and size_ft == "":
-            start = float(m.group(1)) * 10.7639
-            end = float(m.group(2)) * 10.7639 if m.group(2) else ""
-            size_ft = int(min(start, end)) if end else int(start)
-
-        # ---------- ACRES ----------
-        acre_pattern = (
-            r'\b(\d+(?:\.\d+)?)'
-            r'(?:\s*(?:-|to)\s*(\d+(?:\.\d+)?))?'
-            r'\s*(acres?|acre|ac)\b'
-        )
-        m = re.search(acre_pattern, text)
-        if m:
-            start = float(m.group(1))
-            end = float(m.group(2)) if m.group(2) else ""
-            size_ac = round(min(start, end) if end else start, 3)
-
-        # ---------- HECTARES → ACRES ----------
-        hectare_pattern = (
-            r'\b(\d+(?:\.\d+)?)'
-            r'(?:\s*(?:-|to)\s*(\d+(?:\.\d+)?))?'
-            r'\s*(hectares?|ha)\b'
-        )
-        m = re.search(hectare_pattern, text)
-        if m and size_ac == "":
-            start = float(m.group(1)) * 2.47105
-            end = float(m.group(2)) * 2.47105 if m.group(2) else ""
-            size_ac = round(min(start, end) if end else start, 3)
-
-        return size_ft, size_ac
+    def _clean(self, val):
+        return val.strip() if val else ""
