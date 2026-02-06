@@ -43,9 +43,6 @@ class GlanmorPropertyScraper:
                     continue
 
             page += 1
-            if page==2: 
-                break
-
         return self.results
 
     def _build_page_url(self, page):
