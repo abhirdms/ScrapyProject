@@ -13,5 +13,6 @@ SCRAPERS = [
     # "goldenberg_real_estate",
     # "gp_surveyors",
     # 'gregory_moore_property',
-    'gryphon_property_partners',
+    # 'gryphon_property_partners',
+    'gvproperty',
 ]
