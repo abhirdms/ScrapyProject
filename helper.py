@@ -16,6 +16,8 @@ SCRAPERS = [
     # 'gryphon_property_partners',
     # 'gvproperty',
     # 'g_v_a',
-    "hants_realty",
+    # "hants_realty",
     # 'harrocks_commercial_property',
+    # 'hartnell_taylor_cook',
+    'harvey_burns_co'
 ]
