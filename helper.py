@@ -14,5 +14,6 @@ SCRAPERS = [
     # "gp_surveyors",
     # 'gregory_moore_property',
     # 'gryphon_property_partners',
-    'gvproperty',
+    # 'gvproperty',
+    'g_v_a',
 ]
