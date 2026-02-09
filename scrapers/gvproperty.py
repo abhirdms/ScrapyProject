@@ -41,7 +41,6 @@ class GvpropertyScraper:
         )))
 
         tree = html.fromstring(self.driver.page_source)
-        breakpoint()
 
         listing_urls = tree.xpath(
             "//div[contains(@class,'psp_result')]/a[@class='psp_result__url']/@href"
@@ -89,6 +88,17 @@ class GvpropertyScraper:
                 tree.xpath("//h1[contains(@class,'psp_single__title')]/following::h3[2]/text()")
             )
         )
+
+        headline_text = " ".join(
+                t.strip()
+                for t in tree.xpath("//div[contains(@class,'nectar-split-heading')]//text()[normalize-space()]")
+            )
+                    
+        if not size_ac:
+            _, size_ac = self.extract_size(text=headline_text)
+
+        if not size_ac:
+            _, size_ac = self.extract_size(text=detailed_description)
 
         sale_type = self.get_sale_type(tree)
 
@@ -164,9 +174,6 @@ class GvpropertyScraper:
             "saleType": sale_type,
 
         }
-        print("8"*10)
-        print(obj)
-        print("8"*10)
 
         return obj
 
@@ -176,17 +183,20 @@ class GvpropertyScraper:
         if not text:
             return "", ""
 
+        text = text.lower()
+
         combined_text = (
             str(text)
             .replace("m²", "m2")
             .replace("㎡", "m2")
-            .lower()
             .replace(",", "")
             .strip()
         )
 
-        # normalize unicode dashes
         combined_text = re.sub(r"[–—−]", "-", combined_text)
+
+        size_ft = ""
+        size_ac = ""
 
         # ---------- SQ FT RANGE ----------
         sqft_range_pattern = (
@@ -195,26 +205,28 @@ class GvpropertyScraper:
         )
         m = re.search(sqft_range_pattern, combined_text)
         if m:
-            return int(min(float(m.group(1)), float(m.group(2)))), ""
+            size_ft = int(min(float(m.group(1)), float(m.group(2))))
 
         # ---------- SQ FT SINGLE ----------
-        sqft_single_pattern = (
-            r'(\d+(?:\.\d+)?)\s*(sq\.?\s*ft|sqft|square\s*feet|sf)'
-        )
-        m = re.search(sqft_single_pattern, combined_text)
-        if m:
-            return int(float(m.group(1))), ""
+        if not size_ft:
+            sqft_single_pattern = (
+                r'(\d+(?:\.\d+)?)\s*(sq\.?\s*ft|sqft|square\s*feet|sf)'
+            )
+            m = re.search(sqft_single_pattern, combined_text)
+            if m:
+                size_ft = int(float(m.group(1)))
 
         # ---------- SQ METERS → SQ FT ----------
-        sqm_pattern = (
-            r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*'
-            r'(sqm|sq\.?\s*m|m2|square\s*met(?:er|re)s)'
-        )
-        m = re.search(sqm_pattern, combined_text)
-        if m:
-            start = float(m.group(1)) * 10.7639
-            end = float(m.group(2)) * 10.7639 if m.group(2) else None
-            return int(min(start, end)) if end else int(start), ""
+        if not size_ft:
+            sqm_pattern = (
+                r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*'
+                r'(sqm|sq\.?\s*m|m2|square\s*met(?:er|re)s)'
+            )
+            m = re.search(sqm_pattern, combined_text)
+            if m:
+                start = float(m.group(1)) * 10.7639
+                end = float(m.group(2)) * 10.7639 if m.group(2) else None
+                size_ft = int(min(start, end)) if end else int(start)
 
         # ---------- ACRES ----------
         acre_pattern = (
@@ -224,19 +236,21 @@ class GvpropertyScraper:
         if m:
             start = float(m.group(1))
             end = float(m.group(2)) if m.group(2) else None
-            return "", round(min(start, end) if end else start, 3)
+            size_ac = round(min(start, end) if end else start, 3)
 
         # ---------- HECTARES → ACRES ----------
-        hectare_pattern = (
-            r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*(hectares?|ha)'
-        )
-        m = re.search(hectare_pattern, combined_text)
-        if m:
-            start = float(m.group(1)) * 2.47105
-            end = float(m.group(2)) * 2.47105 if m.group(2) else None
-            return "", round(min(start, end) if end else start, 3)
+        if not size_ac:
+            hectare_pattern = (
+                r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*(hectares?|ha)'
+            )
+            m = re.search(hectare_pattern, combined_text)
+            if m:
+                start = float(m.group(1)) * 2.47105
+                end = float(m.group(2)) * 2.47105 if m.group(2) else None
+                size_ac = round(min(start, end) if end else start, 3)
 
-        return "", ""
+        return size_ft, size_ac
+
 
 
 
@@ -347,7 +361,9 @@ class GvpropertyScraper:
         if not numbers:
             return ""
 
-        return str(min(float(n) for n in numbers))
+        price = min(float(n) for n in numbers)
+        return str(int(price)) if price.is_integer() else str(price)
+
     
     def get_tenure_from_description(self, text):
         """
