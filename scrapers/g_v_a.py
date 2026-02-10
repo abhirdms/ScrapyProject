@@ -135,7 +135,7 @@ class GVAScraper:
         if not transactions:
             return "Freehold"
 
-        if "lease" in transactions or "sublease" in transactions:
+        if "lease" in transactions or "sublease" in transactions or 'Leasehold' in transactions:
             return "Leasehold"
 
         return ""

@@ -101,12 +101,12 @@ class GryphonPropertyPartnersScraper:
 
             "postalCode": self.extract_postcode(display_address),
 
-            "brochureUrl": self.normalize_url(" ".join(
-                tree.xpath(
+            "brochureUrl": [
+                self.normalize_url(u) for u in tree.xpath(
                     "//div[contains(@class,'extra-box-top')]"
                     "//div[contains(@class,'dl-list')]//a/@href"
-                )
-            )),
+                ) if self.normalize_url(u)
+            ],
 
             "agentCompanyName": "Gryphon Property Partners",
             "agentName": "",
@@ -124,12 +124,15 @@ class GryphonPropertyPartnersScraper:
     def get_tenure(self, text):
         if not text:
             return ""
-        text= text.lower()
 
-        if "freehold" in text:
+        t = text.lower()
+
+        if "freehold" in t:
             return "Freehold"
-        if "leasehold" in text:
+
+        if "leasehold" in t or "lease" in t:
             return "Leasehold"
+
         return ""
     
     def get_sale_type(self, text):

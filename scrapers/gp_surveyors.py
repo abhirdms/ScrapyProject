@@ -253,11 +253,17 @@ class GpSurveyorsScraper:
         return self.extract_postcode(src)
 
     def get_tenure(self, text):
+        if not text:
+            return ""
+
         t = text.lower()
+
         if "freehold" in t:
             return "Freehold"
-        if "leasehold" in t:
+
+        if "leasehold" in t or "lease" in t:
             return "Leasehold"
+
         return ""
 
     def get_sale_type(self, text):

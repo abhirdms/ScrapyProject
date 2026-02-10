@@ -75,12 +75,14 @@ class HarrocksCommercialPropertyScraper:
         #  Postcode ONLY from display address
         postal_code = self.extract_postcode(display_address)
 
-        brochure_url = self.normalize_url(
-            tree.xpath(
-                "//div[contains(@class,'et_pb_button_module_wrapper')]"
-                "//a[contains(@href,'.pdf')]/@href"
-            )
-        )
+        brochure_url = [
+                nu for u in tree.xpath(
+                    "//div[contains(@class,'et_pb_button_module_wrapper')]"
+                    "//a[contains(@href,'.pdf')]/@href"
+                )
+                if (nu := self.normalize_url(u))
+            ]
+
 
         #  Normalised sale type
         sale_type = self.extract_sale_type(tree)
@@ -122,11 +124,11 @@ class HarrocksCommercialPropertyScraper:
         """
         text = " ".join(tree.xpath("//h3//text()")).upper()
 
-        if "TO LET" in text:
-            return "To Let"
-
         if "FOR SALE" in text or 'SALE' in text:
             return "For Sale"
+
+        if "TO LET" in text:
+            return "To Let"
 
         return ""
 
@@ -135,10 +137,13 @@ class HarrocksCommercialPropertyScraper:
             return ""
 
         t = text.lower()
+
         if "freehold" in t:
             return "Freehold"
-        if "leasehold" in t:
+
+        if "leasehold" in t or "lease" in t:
             return "Leasehold"
+
         return ""
 
     def extract_size(self, text):

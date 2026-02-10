@@ -160,6 +160,10 @@ class HartnellTaylorCookScraper:
             if t.strip()
         ]
 
+        brochure_urls = [
+            self.normalize_url(href)
+            for href in tree.xpath("//a[contains(@href,'.pdf')]/@href")
+        ]
 
         # ---------- OBJECT ---------- #
 
@@ -181,10 +185,7 @@ class HartnellTaylorCookScraper:
 
             "postalCode": self.extract_postcode(display_address),
 
-            "brochureUrl": self.normalize_url(
-                tree.xpath("//a[contains(@href,'.pdf')]/@href")[0]
-                if tree.xpath("//a[contains(@href,'.pdf')]/@href") else ""
-            ),
+            "brochureUrl": brochure_urls,
 
             "agentCompanyName": "Hartnell Taylor Cook",
             "agentName": agent_name,
@@ -278,15 +279,17 @@ class HartnellTaylorCookScraper:
         return urljoin(self.DOMAIN, url) if url else ""
 
     def get_tenure_from_features(self, features):
+
         if not features:
             return ""
 
-        for f in features:
-            lf = f.lower()
-            if "freehold" in lf:
-                return "Freehold"
-            if "leasehold" in lf:
-                return "Leasehold"
+        t = features.lower()
+
+        if "freehold" in t:
+            return "Freehold"
+
+        if "leasehold" in t or "lease" in t:
+            return "Leasehold"
 
         return ""
 

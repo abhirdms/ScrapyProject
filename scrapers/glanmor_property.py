@@ -70,6 +70,10 @@ class GlanmorPropertyScraper:
             "//li[strong[text()='Property Status:']]/span/text()"
         )))
 
+        raw_urls = tree.xpath(
+            "//div[contains(@class,'property-documents')]//a/@href"
+        ) or []
+
         obj = {
             "listingUrl": url,
             "displayAddress": address,
@@ -82,9 +86,7 @@ class GlanmorPropertyScraper:
             "sizeFt": size_ft,
             "sizeAc": size_ac,
             "postalCode": self.extract_postcode(address) if address else self.extract_postcode(title),
-            "brochureUrl": self._clean(" ".join(tree.xpath(
-                "//div[contains(@class,'property-documents')]//a/@href"
-            ))),
+            "brochureUrl": [self._clean(u) for u in raw_urls if u],
             "agentCompanyName": "Glanmor Property",
             "agentName": "",
             "agentCity": "",
@@ -142,10 +144,17 @@ class GlanmorPropertyScraper:
 
     def get_tenure(self, tree):
         text = " ".join(tree.xpath("//p//text()")).lower()
-        if "freehold" in text:
+        if not text:
+            return ""
+
+        t = text.lower()
+
+        if "freehold" in t:
             return "Freehold"
-        elif "leasehold" in text:
+
+        if "leasehold" in t or "lease" in t:
             return "Leasehold"
+
         return ""
 
     def _clean(self, val):

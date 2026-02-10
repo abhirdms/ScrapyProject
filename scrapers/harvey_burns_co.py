@@ -32,28 +32,48 @@ class HarveyBurnsCoScraper:
     # ===================== RUN ===================== #
 
     def run(self):
-        print(f"Fetching: {self.BASE_URL}")
-        self.driver.get(self.BASE_URL)
+        page = 1
 
-        self.wait.until(EC.presence_of_element_located((
-            By.XPATH, "//section[@class='listing-layout']//article[@class='property-item clearfix']"
-        )))
+        while True:
+            page_url = (
+                self.BASE_URL
+                if page == 1
+                else f"{self.BASE_URL}page/{page}/"
+            )
 
-        tree = html.fromstring(self.driver.page_source)
+            self.driver.get(page_url)
 
-        listing_urls = tree.xpath(
-            "//section[@class='listing-layout']"
-            "//article[@class='property-item clearfix']//h4/a/@href"
-        )
-
-        for url in listing_urls:
             try:
-                self.results.append(self.parse_listing(url))
+                self.wait.until(EC.presence_of_element_located((
+                    By.XPATH,
+                    "//div[@id='home-properties']//article[@class='property-item clearfix']"
+                )))
             except Exception:
-                continue
+                # No listings → pagination ended
+                break
+
+            tree = html.fromstring(self.driver.page_source)
+
+            listing_urls = tree.xpath(
+                "//div[@id='home-properties']"
+                "//article[@class='property-item clearfix']//h4/a/@href"
+            )
+
+            if not listing_urls:
+                break
+
+
+            for url in listing_urls:
+                try:
+                    self.results.append(self.parse_listing(url))
+                except Exception:
+                    continue
+
+            page += 1
 
         self.driver.quit()
         return self.results
+
 
     # ================= LISTING ================= #
 
@@ -61,69 +81,96 @@ class HarveyBurnsCoScraper:
         self.driver.get(url)
 
         self.wait.until(EC.presence_of_element_located((
-            By.XPATH, "//div[contains(@id,'property-detail')]"
+            By.XPATH,
+            "//article[@class='property-item clearfix']"
         )))
 
         tree = html.fromstring(self.driver.page_source)
 
-        # ---------- BASIC FIELDS ---------- #
+        # ---------- PAGE TITLE ---------- #
 
-        display_address = self._clean(" ".join(
-            tree.xpath("//div[@class='wrap clearfix']/h1[@class='page-title']/span/text()")
+        page_title = self._clean(" ".join(
+            tree.xpath(
+                "//div[contains(@class,'page-head')]"
+                "//h1[@class='page-title']/span/text()"
+            )
         ))
 
-        detailed_description = self._clean(" ".join(
-            tree.xpath("//article[@class='property-item clearfix']//div[@class='content clearfix']/p//text()")
-        ))
+        # ---------- SALE TYPE ---------- #
 
         sale_type_raw = self._clean(" ".join(
-            tree.xpath("//h5[@class='price']//span[@class='status-label']/text()")
-        ))
+            tree.xpath(
+                "//article[@class='property-item clearfix']"
+                "//h5[@class='price']/span[@class='status-label']/text()"
+            )
+        )) or page_title
+
+        sale_type = self.normalize_sale_type(sale_type_raw)
+
+        # ---------- PROPERTY SUB TYPE ---------- #
 
         property_sub_type = self._clean(" ".join(
-            tree.xpath("//span/small/text()")
+            tree.xpath(
+                "//article[@class='property-item clearfix']"
+                "//h5[@class='price']/span/small/text()"
+            )
+        )).replace("-", "").strip()
+
+        # ---------- DESCRIPTION ---------- #
+
+        detailed_description = self._clean(" ".join(
+            tree.xpath(
+                "//article[@class='property-item clearfix']"
+                "//div[@class='content clearfix']/p//text()"
+            )
         ))
+
+        # ---------- DISPLAY ADDRESS ---------- #
+
+        display_address = self._clean(" ".join(
+            tree.xpath("//h1[@class='page-title']/span/text()")
+        ))
+
 
         # ---------- SIZE (FROM DESCRIPTION ONLY) ---------- #
 
         size_ft, size_ac = self.extract_size(detailed_description)
 
+        # ---------- TENURE (FROM DESCRIPTION) ---------- #
+
+        tenure = self.extract_tenure(detailed_description)
+
         # ---------- IMAGES ---------- #
 
         property_images = tree.xpath(
             "//div[@id='property-detail-flexslider']"
-            "//ul[@class='slides']//li//a/img/@src"
+            "//ul[@class='slides']//li/a/img/@src"
         )
 
-        # ---------- BROCHURE ---------- #
 
-        brochure = tree.xpath(
-            "//ul[@class='attachments-list clearfix']"
-            "//li[contains(@class,'pdf')]/a/@href"
-        )
+    
+        brochure_urls = [
+            self.normalize_url(href)
+            for href in tree.xpath(
+                "//div[contains(@class,'attachments-wrap')]"
+                "//li[contains(@class,'pdf')]/a/@href"
+            )
+        ]
+
 
         # ---------- OBJECT ---------- #
 
         obj = {
             "listingUrl": url,
-
             "displayAddress": display_address,
-
-            "price": self.extract_numeric_price(detailed_description, sale_type_raw),
-
+            "price": self.extract_numeric_price(detailed_description, sale_type),
             "propertySubType": property_sub_type,
-
             "propertyImage": property_images,
-
             "detailedDescription": detailed_description,
-
             "sizeFt": size_ft,
             "sizeAc": size_ac,
-
             "postalCode": self.extract_postcode(display_address),
-
-            "brochureUrl": self.normalize_url(brochure[0]) if brochure else "",
-
+            "brochureUrl": brochure_urls,
             "agentCompanyName": "Harvey Burns & Co",
             "agentName": "",
             "agentCity": "",
@@ -131,14 +178,9 @@ class HarveyBurnsCoScraper:
             "agentPhone": "",
             "agentStreet": "",
             "agentPostcode": "",
-
-            "tenure": "",
-
-            "saleType": self.normalize_sale_type(sale_type_raw),
+            "tenure": tenure,
+            "saleType": sale_type,
         }
-        print("*"*20)
-        print(obj)
-        print("*"*20)
 
         return obj
 
@@ -154,18 +196,14 @@ class HarveyBurnsCoScraper:
         size_ft = ""
         size_ac = ""
 
-        sqft_pattern = (
-            r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*(sq\s*ft|sqft|sf)'
-        )
+        sqft_pattern = r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*(sq\s*ft|sqft|sf)'
         m = re.search(sqft_pattern, text)
         if m:
             start = float(m.group(1))
             end = float(m.group(2)) if m.group(2) else None
             size_ft = round(min(start, end), 3) if end else round(start, 3)
 
-        acre_pattern = (
-            r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*(acres?|acre|ac)'
-        )
+        acre_pattern = r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*(acres?|acre|ac)'
         m = re.search(acre_pattern, text)
         if m:
             start = float(m.group(1))
@@ -175,16 +213,82 @@ class HarveyBurnsCoScraper:
         return size_ft, size_ac
 
     def extract_numeric_price(self, text, sale_type):
-        if not text or "sale" not in sale_type.lower():
+        if sale_type != "For Sale":
+            return ""
+
+        if not text:
             return ""
 
         raw = text.lower()
-        if any(k in raw for k in ["poa", "application"]):
+
+        # Ignore POA
+        if any(k in raw for k in [
+            "poa",
+            "price on application",
+            "upon application",
+            "on application",
+        ]):
             return ""
 
-        raw = raw.replace("£", "").replace(",", "")
-        nums = re.findall(r"\d+(?:\.\d+)?", raw)
-        return str(int(float(nums[0]))) if nums else ""
+        # Ignore RENT values explicitly
+        rent_keywords = [
+            "per annum",
+            "pa",
+            "per year",
+            "pcm",
+            "per month",
+            "pw",
+            "per week",
+            "rent",
+            "rental",
+        ]
+        if any(k in raw for k in rent_keywords):
+            return ""
+
+        # Prefer sale-context sentences
+        sale_contexts = [
+            r'(guide price[^£€]*[£€]\s*\d)',
+            r'(price[^£€]*[£€]\s*\d)',
+            r'(for sale[^£€]*[£€]\s*\d)',
+            r'([£€]\s*\d+(?:,\d{3})*(?:\.\d+)?\s*m)',
+            r'([£€]\s*\d+(?:,\d{3})*(?:\.\d+)?)',
+        ]
+
+        for ctx in sale_contexts:
+            m = re.search(ctx, raw)
+            if not m:
+                continue
+
+            val = re.search(r'[£€]\s*(\d+(?:,\d{3})*(?:\.\d+)?)', m.group())
+            if not val:
+                continue
+
+            num = float(val.group(1).replace(",", ""))
+
+            # Million shorthand
+            if "m" in m.group():
+                num *= 1_000_000
+
+            return str(int(num))
+
+        return ""
+
+
+
+    def extract_tenure(self, text):
+        if not text:
+            return ""
+
+        t = text.lower()
+
+        if "freehold" in t:
+            return "Freehold"
+
+        if "leasehold" in t or "lease" in t:
+            return "Leasehold"
+
+        return ""
+
 
     def extract_postcode(self, text):
         if not text:
@@ -204,11 +308,11 @@ class HarveyBurnsCoScraper:
         if "let" in t:
             return "To Let"
         if "under offer" in t:
-            return "Under Offer"
+            return "For Sale"
         return ""
 
     def normalize_url(self, url):
         return urljoin(self.DOMAIN, url) if url else ""
 
     def _clean(self, val):
-        return val.strip() if val else ""
+        return " ".join(val.split()) if val else ""

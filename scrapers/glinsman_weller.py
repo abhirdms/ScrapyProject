@@ -96,9 +96,11 @@ class GlinsmanWellerScraper:
 
             "postalCode": self.extract_postcode(display_address),
 
-            "brochureUrl": self._clean(" ".join(tree.xpath(
-                "//a[text()='Brochure' and contains(@href,'.pdf')]/@href"
-            ))),
+            "brochureUrl": [
+                self._clean(u) for u in tree.xpath(
+                    "//a[text()='Brochure' and contains(@href,'.pdf')]/@href"
+                ) if self._clean(u)
+            ],
 
             "agentCompanyName": "Glinsman Weller",
             "agentName": "",
@@ -150,10 +152,17 @@ class GlinsmanWellerScraper:
             "//div[@data-widget_type='theme-post-content.default']//p//text()"
         )).lower()
 
-        if "freehold" in text:
+        if not text:
+            return ""
+
+        t = text.lower()
+
+        if "freehold" in t:
             return "Freehold"
-        elif "leasehold" in text:
+
+        if "leasehold" in t or "lease" in t:
             return "Leasehold"
+
         return ""
 
     def extract_size(self, tree):

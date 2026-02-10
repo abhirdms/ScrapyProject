@@ -73,9 +73,11 @@ class GoldenbergRealEstateScraper:
             "postalCode": self.extract_postcode(address),
 
 
-            "brochureUrl": self._clean(" ".join(el.xpath(
-                ".//a[contains(@href,'.pdf')]/@href"
-            ))),
+            "brochureUrl": [
+                self._clean(u) for u in el.xpath(
+                    ".//a[contains(@href,'.pdf')]/@href"
+                ) if self._clean(u)
+            ],
 
             "agentCompanyName": "Goldenberg Real Estate",
 
@@ -179,11 +181,17 @@ class GoldenbergRealEstateScraper:
 
 
     def get_tenure(self, text):
+        if not text:
+            return ""
+
         t = text.lower()
+
         if "freehold" in t:
             return "Freehold"
-        if "leasehold" in t:
+
+        if "leasehold" in t or "lease" in t:
             return "Leasehold"
+
         return ""
 
     def get_sale_type(self, text):

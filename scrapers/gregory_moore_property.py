@@ -53,12 +53,14 @@ class GregoryMoorePropertyScraper:
         # ⬇️ use FULL caption text for postcode extraction
         caption_full_text = " ".join(caption_texts)
         postal_code = self.extract_postcode(caption_full_text)
-        raw_brochure = self._clean(" ".join(
-                el.xpath(".//dt//a/@href")
-            ))
+        raw_brochures = el.xpath(".//dt//a/@href")
+
 
         obj = {
-            "listingUrl":self.normalize_url(raw_brochure),
+            "listingUrl": (
+                self.normalize_url(raw_brochures[0])
+                if raw_brochures else ""
+            ),
 
             "displayAddress": display_address,
 
@@ -77,7 +79,11 @@ class GregoryMoorePropertyScraper:
 
             "postalCode": postal_code,
 
-            "brochureUrl": self.normalize_url(raw_brochure),
+            "brochureUrl": [
+                nu for u in raw_brochures
+                if (nu := self.normalize_url(u))
+            ],
+
 
             "agentCompanyName": "Gregory Moore Property",
 

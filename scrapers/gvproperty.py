@@ -277,16 +277,16 @@ class GvpropertyScraper:
 
     def get_brochure_url(self, tree):
         """
-        Extract actual brochure PDF URL from brochure tab.
+        Extract brochure PDF URLs from brochure tab.
+        Always returns a list.
         """
-        urls = tree.xpath(
-            "//div[@id='tab-brochure']//a[contains(@href,'.pdf')]/@href"
-        )
+        return [
+            nu for u in tree.xpath(
+                "//div[@id='tab-brochure']//a[contains(@href,'.pdf')]/@href"
+            )
+            if (nu := self.normalize_url(u))
+        ]
 
-        if not urls:
-            return ""
-
-        return self.normalize_url(urls[0])
 
 
     def get_sale_type(self, tree):
@@ -375,13 +375,13 @@ class GvpropertyScraper:
         if not text:
             return ""
 
-        raw = text.lower()
+        t = text.lower()
 
-        if "leasehold" in raw:
-            return "Leasehold"
-
-        if "freehold" in raw:
+        if "freehold" in t:
             return "Freehold"
+
+        if "leasehold" in t or "lease" in t:
+            return "Leasehold"
 
         return ""
 

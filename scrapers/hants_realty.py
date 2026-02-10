@@ -102,10 +102,18 @@ class HantsRealtyScraper:
             )
         ).strip()
 
-        pdf_url = ""
         pdfs = modal.xpath(".//a[contains(@href,'.pdf')]/@href")
-        if pdfs:
-            pdf_url = urljoin(self.DOMAIN, pdfs[0])
+
+        brochure_urls = [
+            urljoin(self.DOMAIN, u) for u in pdfs
+        ]
+
+        listing_url = (
+            urljoin(self.DOMAIN, pdfs[0])
+            if pdfs else ""
+        )
+
+
 
         images = [
             urljoin(self.DOMAIN, img)
@@ -123,7 +131,7 @@ class HantsRealtyScraper:
         ).strip()
 
         return {
-            "listingUrl": pdf_url,
+            "listingUrl": listing_url,
             "displayAddress": title,
 
             "price": "",
@@ -138,7 +146,7 @@ class HantsRealtyScraper:
 
             "postalCode": "",
 
-            "brochureUrl": pdf_url,
+            "brochureUrl": brochure_urls,
 
             "agentCompanyName": "Hants Realty",
             "agentName": "",

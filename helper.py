@@ -19,5 +19,8 @@ SCRAPERS = [
     # "hants_realty",
     # 'harrocks_commercial_property',
     # 'hartnell_taylor_cook',
-    'harvey_burns_co'
+    # 'harvey_burns_co',
+    # 'hayward_fox',
+    # 'h_d_a_k',
+    'heaney_micklethwaite'
 ]
