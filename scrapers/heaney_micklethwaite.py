@@ -119,26 +119,28 @@ class HeaneyMicklethwaiteScraper:
             )
         ))
 
-        general_info = self._clean(" ".join(
-            tree.xpath(
-                "//h3[normalize-space()='General Information']"
-                "/ancestor::div[contains(@class,'elementor-widget')]"
-                "/following-sibling::div[contains(@class,'elementor-widget-text-editor')][1]"
-                "//p//text()"
-            )
-        ))
-
-        location_details = self._clean(" ".join(
-            tree.xpath(
-                "//h3[normalize-space()='Location Details']"
-                "/ancestor::div[contains(@class,'elementor-widget')]"
-                "/following-sibling::div[contains(@class,'elementor-widget-text-editor')][1]"
-                "//p//text()"
-            )
-        ))
+        general_info = self.get_section_text(tree, "General Information")
+        location_details = self.get_section_text(tree, "Location Details")
+        accommodation_details = self.get_section_text(tree, "Accomodation Details")
+        rent_details = self.get_section_text(tree, "Rent Details")
+        lease_terms = self.get_section_text(tree, "Lease/Rent Terms")
 
         detailed_description = " ".join(
-            part for part in [general_info, location_details] if part
+            part for part in [
+                general_info,
+                location_details,
+                accommodation_details,
+                rent_details,
+                lease_terms
+            ] if part
+        )
+
+        detailed_description = " ".join(
+            part for part in [
+                general_info,
+                location_details,
+                accommodation_details
+            ] if part
         )
 
         # ---------- SIZE (FROM DESCRIPTION ONLY) ---------- #
@@ -184,12 +186,19 @@ class HeaneyMicklethwaiteScraper:
             "tenure": tenure,
             "saleType": sale_type,
         }
-        print("*"*20)
-        print(obj)
-        print("*"*20)
         return obj
 
     # ===================== HELPERS ===================== #
+
+    def get_section_text(self,tree, heading):
+        return self._clean(" ".join(
+            tree.xpath(
+                f"//h3[normalize-space()='{heading}']"
+                "/ancestor::div[contains(@class,'elementor-widget')]"
+                "/following-sibling::div[contains(@class,'elementor-widget-text-editor')][1]"
+                "//p//text()"
+            )
+        ))
 
     def extract_size(self, text):
         if not text:
