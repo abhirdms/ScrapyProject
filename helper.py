@@ -25,5 +25,7 @@ SCRAPERS = [
     # 'heaney_micklethwaite',
     # 'heb_chartered_surveyors',
     # 'herron_associates',
-    'h_m_c_surveyors'
+    # 'h_m_c_surveyors',
+    # 'hough_gould',
+    'howse_associates'
 ]
