@@ -14,6 +14,9 @@ from helper import SCRAPERS
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+from datetime import datetime
+import csv
+
  # storing the data in website data you can keep the name of the agent company name.
  #  for example if Company Name is Hants Realty , the file name will be hants_realty.csv
 
@@ -33,15 +36,10 @@ def run_all_scrapers():
         print("-" * 50)
 
         try:
-            # Import the scraper module dynamically
             module = importlib.import_module(f"scrapers.{scraper_name}")
-            
-            # Get the scraper class (assumes class name is PascalCase of module name + Scraper)
-            # e.g., knight_commercial -> KnightCommercialScraper
             class_name = ''.join(word.title() for word in scraper_name.split('_')) + 'Scraper'
             scraper_class = getattr(module, class_name)
 
-            # Create and run the scraper
             scraper = scraper_class()
             properties = scraper.run()
 
@@ -59,9 +57,46 @@ def run_all_scrapers():
 
         print()
 
-    if all_results:
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    previous_data = []
+    previous_urls = set()
+
+    if os.path.exists(CSV_FILE_NAME):
+        with open(CSV_FILE_NAME, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            previous_data = list(reader)
+            previous_urls = {row["listingUrl"] for row in previous_data if row.get("listingUrl")}
+
+    current_urls = {row["listingUrl"] for row in all_results if row.get("listingUrl")}
+
+    final_data = []
+
+    # Mark New / Old
+    for row in all_results:
+        listing_url = row.get("listingUrl")
+
+        row["date"] = today
+
+        if listing_url in previous_urls:
+            row["status"] = "Old"
+        else:
+            row["status"] = "New"
+
+        final_data.append(row)
+
+    # Mark Deleted
+    deleted_urls = previous_urls - current_urls
+
+    for old_row in previous_data:
+        if old_row.get("listingUrl") in deleted_urls:
+            old_row["date"] = today
+            old_row["status"] = "Deleted"
+            final_data.append(old_row)
+
+    if final_data:
         store_data_to_csv(
-            all_results,
+            final_data,
             filepath=CSV_FILE_NAME,
             mode="overwrite"
         )

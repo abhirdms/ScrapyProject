@@ -10,7 +10,6 @@ from selenium.webdriver.support import expected_conditions as EC
 
 from lxml import html
 
-
 class HerronAssociatesScraper:
 
     BASE_URL = "http://herronassociates.co.uk/available-properties.html"
@@ -94,10 +93,20 @@ class HerronAssociatesScraper:
             tree.xpath("//h2[@class='itemTitle']/text()")
         ))
 
-        # ---------- DESCRIPTION ----------
-        detailed_description = self._clean(" ".join(
-            tree.xpath("//div[@class='itemFullText']/p[normalize-space()]//text()")
-        ))
+                # Remove script/style
+        for bad in tree.xpath("//script|//style"):
+            bad.getparent().remove(bad)
+
+        # Remove HTML comments (this removes the var prefix block)
+        for comment in tree.xpath("//comment()"):
+            parent = comment.getparent()
+            if parent is not None:
+                parent.remove(comment)
+
+        # Extract clean text
+        detailed_description = self._clean(
+            tree.xpath("string(//div[@class='itemFullText'])")
+        )
 
         desc_lower = detailed_description.lower()
 

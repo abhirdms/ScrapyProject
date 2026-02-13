@@ -28,6 +28,8 @@ STANDARD_COLUMNS = [
     "agentPostcode",
     "tenure",
     "saleType",
+    "date",        
+    "status", 
 ]
 
 
