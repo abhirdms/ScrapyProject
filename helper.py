@@ -28,5 +28,16 @@ SCRAPERS = [
     # 'h_m_c_surveyors',
     # 'hough_gould',
     # 'howse_associates',
-    'hummerstone_hawkins'
+    # 'hummerstone_hawkins'
+    # 'h_r_h_retail',
+    # 'j_h_walter',
+    # 'j_r_b_t_commercial_property',
+    # 'jaggard_macland',
+    # 'jarroms',
+    # 'jem_property',
+    # 'jim_raw_rees',
+    # 'john_whiteman_co',
+    # 'johnson_tucker', csv remaining
+    # 'joiner_cummings',
+    # 'justice_co'
 ]
