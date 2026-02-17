@@ -39,5 +39,9 @@ SCRAPERS = [
     # 'john_whiteman_co',
     # 'johnson_tucker', csv remaining
     # 'joiner_cummings',
-    # 'justice_co'
+    # 'justice_co',
+    # 'kavanaghs', office
+    # 'kimmre',
+    # 'l_b_l_real_estate',
+    # 'leighton_goldhill'
 ]

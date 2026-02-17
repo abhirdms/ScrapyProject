@@ -63,6 +63,17 @@ class KimmreScraper:
                 break
 
             for card in cards:
+
+                status = self._clean(" ".join(
+                    card.xpath(
+                        ".//div[contains(@class,'sales-card-tag')]"
+                        "//div[contains(@class,'body-text')]/text()"
+                    )
+                )).lower()
+
+                # Skip if not live
+                if status != "live":
+                    continue
                 brochure = card.xpath(
                     ".//a[contains(@class,'live-sales-button')]/@href"
                 )
@@ -93,6 +104,8 @@ class KimmreScraper:
                 size_ft, size_ac = self.extract_size(description)
                 price = self.extract_numeric_price(price_text, "For Sale")
 
+                tenure = self.extract_tenure(description)
+
                 obj = {
                     "listingUrl": listing_url,
                     "displayAddress": title,
@@ -111,7 +124,7 @@ class KimmreScraper:
                     "agentPhone": "",
                     "agentStreet": "",
                     "agentPostcode": "",
-                    "tenure": "",
+                    "tenure": tenure,
                     "saleType": "For Sale",
                 }
 
@@ -173,9 +186,13 @@ class KimmreScraper:
             tree.xpath("//li[.//div[text()='Property type']]/div[2]/text()")
         ))
 
-        tenure = self._clean(" ".join(
+        sale_type_raw = self._clean(" ".join(
             tree.xpath("//li[.//div[text()='Tenure']]/div[2]/text()")
         ))
+
+        sale_type = self.normalize_sale_type(sale_type_raw)
+
+
 
         size_text = self._clean(" ".join(
             tree.xpath("//li[.//div[text()='Size']]/div[2]//text()")
@@ -195,6 +212,8 @@ class KimmreScraper:
             part for part in [short_desc, key_features, specifications] if part
         )
 
+        tenure = self.extract_tenure(detailed_description)
+
         image = tree.xpath("//img[contains(@class,'lettings-fw-image')]/@src")
         image = image[0] if image else ""
 
@@ -206,15 +225,22 @@ class KimmreScraper:
             tree.xpath("(//a[contains(@href,'tel:')]/text())[1]")
         ))
 
-        agent_email = tree.xpath("(//a[contains(@href,'mailto:')]/@href)[1]")
-        agent_email = agent_email[0].replace("mailto:", "") if agent_email else ""
+        agent_email = ""
+
+        email = tree.xpath(
+            "(//div[contains(@class,'team-card-name-small')][1]"
+            "//a[contains(@class,'team-email')]/@href)"
+        )
+
+        if email:
+            agent_email = email[0].replace("mailto:", "")
 
         brochure_urls = [
             urljoin(self.DOMAIN, href)
             for href in tree.xpath("//a[contains(@href,'.pdf')]/@href")
         ]
 
-        return {
+        obj = {
             "listingUrl": url,
             "displayAddress": title,
             "price": "",
@@ -233,37 +259,89 @@ class KimmreScraper:
             "agentStreet": "",
             "agentPostcode": "",
             "tenure": tenure,
-            "saleType": "To Let",
+            "saleType": sale_type,
         }
 
+        return obj
+
     # ===================== HELPERS ===================== #
+
+    def normalize_sale_type(self, text):
+        t = text.lower()
+        if "sale" in t:
+            return "For Sale"
+        if "rent" in t or "to let" in t:
+            return "To Let"
+        if "under offer" in t:
+            return "For Sale"
+        return ""
+
+
+    def extract_tenure(self, text):
+        if not text:
+            return ""
+
+        t = text.lower()
+        if "freehold" in t:
+            return "Freehold"
+        if "leasehold" in t:
+            return "Leasehold"
+        return ""
 
     def extract_size(self, text):
         if not text:
             return "", ""
 
-        t = text.lower().replace(",", "")
-        m = re.search(r'(\d+(?:\.\d+)?)\s*(sq\s*ft|sqft|sf)', t)
-        size_ft = float(m.group(1)) if m else ""
+        text = text.lower().replace(",", "")
+        text = re.sub(r"[–—−]", "-", text)
 
-        m = re.search(r'(\d+(?:\.\d+)?)\s*(acres?|acre|ac)', t)
-        size_ac = float(m.group(1)) if m else ""
+        size_ft = ""
+        size_ac = ""
+
+        m = re.search(r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*(sq\s*ft|sqft|sf)', text)
+        if m:
+            a = float(m.group(1))
+            b = float(m.group(2)) if m.group(2) else None
+            size_ft = round(min(a, b), 3) if b else round(a, 3)
+
+        m = re.search(r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*(acres?|acre|ac)', text)
+        if m:
+            a = float(m.group(1))
+            b = float(m.group(2)) if m.group(2) else None
+            size_ac = round(min(a, b), 3) if b else round(a, 3)
 
         return size_ft, size_ac
 
     def extract_numeric_price(self, text, sale_type):
-        if sale_type != "For Sale" or not text:
+        if sale_type != "For Sale":
+            return ""
+
+        if not text:
             return ""
 
         t = text.lower()
-        if "poa" in t:
+
+        if any(k in t for k in [
+            "poa", "price on application", "upon application", "on application"
+        ]):
             return ""
 
-        m = re.search(r'£\s*(\d+(?:,\d+)*)', t)
+        if any(k in t for k in [
+            "per annum", "pa", "per year", "pcm",
+            "per month", "pw", "per week", "rent"
+        ]):
+            return ""
+
+        m = re.search(r'[£€]\s*(\d+(?:,\d{3})*(?:\.\d+)?)\s*m?', t)
         if not m:
             return ""
 
-        return m.group(1).replace(",", "")
+        num = float(m.group(1).replace(",", ""))
+        if "m" in m.group(0):
+            num *= 1_000_000
+
+        return str(int(num))
+
 
     def extract_postcode(self, text):
         FULL = r'\b[A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2}\b'

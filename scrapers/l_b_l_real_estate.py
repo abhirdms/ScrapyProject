@@ -63,8 +63,9 @@ class LBLRealEstateScraper:
     def parse_listing(self, node):
 
         display_address = self._clean(" ".join(
-            node.xpath(".//div[contains(@class,'services-content')]/h4/text()")
+            node.xpath(".//div[contains(@class,'services-content')]/p[1]/text()")
         ))
+
 
         sale_type_raw = self._clean(" ".join(
             node.xpath(".//div[contains(@class,'services-content')]/small/text()")
@@ -206,7 +207,7 @@ class LBLRealEstateScraper:
         t = text.lower()
         if "sale" in t:
             return "For Sale"
-        if "let" in t:
+        if "to let" in t:
             return "To Let"
         return ""
 

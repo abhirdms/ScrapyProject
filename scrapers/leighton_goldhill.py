@@ -12,8 +12,12 @@ from lxml import html
 
 
 class LeightonGoldhillScraper:
-    BASE_URL = "https://www.leightongoldhill.com/portfolio/reigate-place/"
+    BASE_URLS = [
+        "https://www.leightongoldhill.com/portfolios/offices/",
+        "https://www.leightongoldhill.com/portfolios/industrial-distribution/"
+    ]
     DOMAIN = "https://www.leightongoldhill.com"
+    AGENT_COMPANY = "Leighton Goldhill"
 
     def __init__(self):
         self.results = []
@@ -33,20 +37,64 @@ class LeightonGoldhillScraper:
     # ===================== RUN ===================== #
 
     def run(self):
-        url = self.BASE_URL
 
-        if url not in self.seen_urls:
-            self.seen_urls.add(url)
-            obj = self.parse_listing(url)
-            if obj:
-                self.results.append(obj)
+        for base_url in self.BASE_URLS:
+            self.driver.get(base_url)
+
+            self.wait.until(EC.presence_of_element_located((
+                By.XPATH,
+                "//div[contains(@class,'portfolio')]"
+            )))
+
+            tree = html.fromstring(self.driver.page_source)
+
+            property_sub_type = self._clean(" ".join(
+                tree.xpath("//div[@class='head_text']/h2/text()")
+            ))
+
+            listings = tree.xpath(
+                "//div[contains(@class,'box') and contains(@class,'portfolio')]"
+            )
+
+            for listing in listings:
+
+                href = listing.xpath(".//h5/a/@href")
+                if not href:
+                    continue
+
+                url = urljoin(self.DOMAIN, href[0].strip())
+
+                if url in self.seen_urls:
+                    continue
+
+                # -------- GET STATUS FROM OUTER CARD -------- #
+                status_text = self._clean(" ".join(
+                    listing.xpath(".//div[@class='portfolio_info']//p/strong[1]/text()")
+                ))
+
+                if status_text and "sold" in status_text.lower():
+                    continue
+
+                sale_type = self.normalize_sale_type(status_text)
+
+                self.seen_urls.add(url)
+
+                try:
+                    obj = self.parse_listing(url, property_sub_type, sale_type)
+                    if obj:
+                        self.results.append(obj)
+                except Exception:
+                    continue
 
         self.driver.quit()
         return self.results
 
+
     # ===================== LISTING ===================== #
 
-    def parse_listing(self, url):
+    def parse_listing(self, url, property_sub_type, sale_type):
+
+
         self.driver.get(url)
 
         self.wait.until(EC.presence_of_element_located((
@@ -56,16 +104,16 @@ class LeightonGoldhillScraper:
 
         tree = html.fromstring(self.driver.page_source)
 
-        # ---------- DISPLAY ADDRESS ---------- #
+        # ---------- ADDRESS ---------- #
         display_address = self._clean(" ".join(
             tree.xpath("//div[@class='head_text']/h2/text()")
         ))
 
         # ---------- DESCRIPTION ---------- #
-        paragraphs = tree.xpath(
+        description_parts = tree.xpath(
             "//div[@class='content']//p//text()"
         )
-        detailed_description = self._clean(" ".join(paragraphs))
+        detailed_description = self._clean(" ".join(description_parts))
 
         # ---------- SIZE ---------- #
         size_ft, size_ac = self.extract_size(detailed_description)
@@ -73,8 +121,6 @@ class LeightonGoldhillScraper:
         # ---------- TENURE ---------- #
         tenure = self.extract_tenure(detailed_description)
 
-        # ---------- SALE TYPE ---------- #
-        sale_type = self.normalize_sale_type(detailed_description)
 
         # ---------- PRICE ---------- #
         price = self.extract_numeric_price(detailed_description, sale_type)
@@ -97,14 +143,14 @@ class LeightonGoldhillScraper:
             "listingUrl": url,
             "displayAddress": display_address,
             "price": price,
-            "propertySubType": "",
+            "propertySubType": property_sub_type,
             "propertyImage": property_images,
             "detailedDescription": detailed_description,
             "sizeFt": size_ft,
             "sizeAc": size_ac,
             "postalCode": self.extract_postcode(display_address),
             "brochureUrl": brochure_urls,
-            "agentCompanyName": "Leighton Goldhill",
+            "agentCompanyName": self.AGENT_COMPANY,
             "agentName": "",
             "agentCity": "",
             "agentEmail": "",
@@ -154,8 +200,8 @@ class LeightonGoldhillScraper:
             return ""
 
         if any(k in t for k in [
-            "per annum", "pa", "per year", "pcm",
-            "per month", "pw", "per week", "rent"
+            "per annum", "pa", "pcm", "per month",
+            "per week", "pw", "rent"
         ]):
             return ""
 
@@ -191,13 +237,20 @@ class LeightonGoldhillScraper:
         m = re.search(FULL, t) or re.search(PARTIAL, t)
         return m.group() if m else ""
 
-    def normalize_sale_type(self, text):
-        t = text.lower()
+    def normalize_sale_type(self, status_text):
+        if not status_text:
+            return ""
+
+        t = status_text.lower()
+
+        if "let" in t:
+            return "To Let"
+
         if "for sale" in t:
             return "For Sale"
-        if "to let" in t or "let" in t:
-            return "To Let"
+
         return ""
+
 
     def _clean(self, val):
         return " ".join(val.split()) if val else ""
