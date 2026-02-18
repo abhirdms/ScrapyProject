@@ -82,7 +82,10 @@ class KavanaghsScraper:
 
         # ---------- ADDRESS ---------- #
         display_address = self._clean(" ".join(
-            tree.xpath("//p[contains(@class,'bnr_para')]/text()")
+            tree.xpath(
+                "//div[contains(@class,'common_bnr_cont')]"
+                "//p[contains(@class,'bnr_para')][1]/text()"
+            )
         ))
 
         # ---------- PRICE ---------- #
@@ -104,7 +107,10 @@ class KavanaghsScraper:
 
         # ---------- DESCRIPTION ---------- #
         detailed_description = self._clean(" ".join(
-            tree.xpath("//div[@id='full_notice_description']//text()")
+            tree.xpath(
+                "//div[@id='full_notice_description']"
+                "//text()[not(ancestor::style) and not(ancestor::script)]"
+            )
         ))
 
         # ---------- SIZE ---------- #
@@ -123,6 +129,13 @@ class KavanaghsScraper:
             ) if src
         ]
 
+        brochure_urls = [
+            urljoin(self.DOMAIN, href)
+            for href in tree.xpath(
+                "//div[contains(@class,'print_brochure')]//a/@href"
+            )
+        ]
+
         obj = {
             "listingUrl": url,
             "displayAddress": display_address,
@@ -133,7 +146,7 @@ class KavanaghsScraper:
             "sizeFt": size_ft,
             "sizeAc": size_ac,
             "postalCode": self.extract_postcode(display_address),
-            "brochureUrl": [],
+            "brochureUrl": brochure_urls,
             "agentCompanyName": "Kavanaghs",
             "agentName": "",
             "agentCity": "",

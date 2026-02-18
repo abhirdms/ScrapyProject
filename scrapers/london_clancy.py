@@ -113,12 +113,30 @@ class LondonClancyScraper:
         ))
 
         # ---------- DESCRIPTION ---------- #
-        detailed_description = self._clean(" ".join(
-            tree.xpath(
-                "//h2[normalize-space()='Description']"
-                "/following-sibling::p[1]/text()"
+        description_parts = []
+
+        sections = tree.xpath("//div[contains(@class,'post')]//h2")
+
+        for section in sections:
+            heading = self._clean(" ".join(section.xpath(".//text()")))
+
+            content_nodes = section.xpath(
+                "following-sibling::*["
+                "count(. | following-sibling::h2[1]/preceding-sibling::*) = "
+                "count(following-sibling::h2[1]/preceding-sibling::*)"
+                "]//text()"
             )
-        ))
+
+            content = self._clean(" ".join(content_nodes))
+
+            if heading:
+                description_parts.append(heading)
+
+            if content:
+                description_parts.append(content)
+
+        detailed_description = "\n\n".join(description_parts)
+
 
         # ---------- SIZE ---------- #
         size_text = self._clean(" ".join(
@@ -130,12 +148,15 @@ class LondonClancyScraper:
         size_ft, size_ac = self.extract_size(size_text)
 
         # ---------- TENURE ---------- #
-        tenure = self._clean(" ".join(
+        tenure_text = self._clean(" ".join(
             tree.xpath(
                 "//h2[normalize-space()='Terms']"
-                "/following-sibling::p[1]/text()"
+                "/following-sibling::p[1]//text()"
             )
         ))
+
+        tenure = self.extract_tenure(tenure_text)
+
 
         # ---------- PRICE (RENT ROW AS PROVIDED) ---------- #
         price_text = self._clean(" ".join(
@@ -164,15 +185,15 @@ class LondonClancyScraper:
         # ---------- AGENT ---------- #
         agent_name = self._clean(" ".join(
             tree.xpath(
-                "//div[contains(@class,'contactUser__details')]"
+                "(//div[contains(@class,'contactUser__details')])[1]"
                 "//h3/a/text()"
             )
         ))
 
         agent_phone = self._clean(" ".join(
             tree.xpath(
-                "//div[contains(@class,'contactUser__details')]"
-                "/p[1]/text()"
+                "(//div[contains(@class,'contactUser__details')])[1]"
+                "//p[1]/text()"
             )
         ))
 
@@ -198,50 +219,122 @@ class LondonClancyScraper:
             "saleType": sale_type,
         }
 
+
         return obj
 
     # ===================== HELPERS ===================== #
 
-    def extract_size(self, text):
-        if not text:
-            return "", ""
-
-        t = text.lower().replace(",", "")
-        t = re.sub(r"[–—−]", "-", t)
-
-        size_ft = ""
-        size_ac = ""
-
-        m = re.search(r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*(sq\s*ft|sqft|sf)', t)
-        if m:
-            a = float(m.group(1))
-            b = float(m.group(2)) if m.group(2) else None
-            size_ft = round(min(a, b), 3) if b else round(a, 3)
-
-        m = re.search(r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*(acres?|acre|ac)', t)
-        if m:
-            a = float(m.group(1))
-            b = float(m.group(2)) if m.group(2) else None
-            size_ac = round(min(a, b), 3) if b else round(a, 3)
-
-        return size_ft, size_ac
-
-    def extract_numeric_price(self, text, sale_type):
+    def extract_tenure(self, text):
         if not text:
             return ""
 
         t = text.lower()
 
+        if "freehold" in t:
+            return "Freehold"
+
+        if "leasehold" in t:
+            return "Leasehold"
+
+        return ""
+
+
+    def extract_size(self, text):
+        if not text:
+            return "", ""
+
+        text = text.lower()
+        text = text.replace(",", "")
+        text = text.replace("ft²", "sq ft")
+        text = text.replace("m²", "sqm")
+        text = re.sub(r"[–—−]", "-", text)
+
+        size_ft = ""
+        size_ac = ""
+
+        # ===================== SQUARE FEET ===================== #
+        m = re.search(
+            r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*'
+            r'(sq\.?\s*ft\.?|sqft|sf|square\s*feet|square\s*foot|sq\s*feet)',
+            text
+        )
+        if m:
+            a = float(m.group(1))
+            b = float(m.group(2)) if m.group(2) else None
+            size_ft = round(min(a, b), 3) if b else round(a, 3)
+
+        # ===================== SQUARE METRES ===================== #
+        if not size_ft:
+            m = re.search(
+                r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*'
+                r'(sqm|sq\.?\s*m|m2|square\s*metres|square\s*meters)',
+                text
+            )
+            if m:
+                a = float(m.group(1))
+                b = float(m.group(2)) if m.group(2) else None
+                sqm_value = min(a, b) if b else a
+                size_ft = round(sqm_value * 10.7639, 3)  # convert sqm → sqft
+
+        # ===================== ACRES ===================== #
+        m = re.search(
+            r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*'
+            r'(acres?|acre|ac\.?)',
+            text
+        )
+        if m:
+            a = float(m.group(1))
+            b = float(m.group(2)) if m.group(2) else None
+            size_ac = round(min(a, b), 3) if b else round(a, 3)
+
+        # ===================== HECTARES ===================== #
+        if not size_ac:
+            m = re.search(
+                r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*'
+                r'(hectares?|ha)',
+                text
+            )
+            if m:
+                a = float(m.group(1))
+                b = float(m.group(2)) if m.group(2) else None
+                hectare_value = min(a, b) if b else a
+                size_ac = round(hectare_value * 2.47105, 3)  # convert ha → acres
+
+        return size_ft, size_ac
+
+    def extract_numeric_price(self, text, sale_type):
+        if sale_type != "For Sale":
+            return ""
+
+        if not text:
+            return ""
+
+        t = text.lower()
+
+        # Ignore POA types
         if any(k in t for k in [
             "poa", "price on application", "upon application", "on application"
         ]):
             return ""
 
-        m = re.search(r'[£€]\s*(\d+(?:,\d{3})*(?:\.\d+)?)', t)
+        # 🔥 IMPORTANT FIX:
+        # Only extract the part BEFORE "or to let"
+        sale_part = t.split("or to let")[0]
+
+        # Remove VAT text
+        sale_part = sale_part.replace("plus vat", "")
+
+        # Find first £ amount in sale portion
+        m = re.search(r'£\s*(\d+(?:,\d{3})*(?:\.\d+)?)\s*m?', sale_part)
         if not m:
             return ""
 
         num = float(m.group(1).replace(",", ""))
+
+        # Handle million shorthand
+        if "m" in m.group(0):
+            num *= 1_000_000
+
         return str(int(num))
 
     def extract_postcode(self, text):

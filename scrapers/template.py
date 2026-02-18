@@ -370,25 +370,65 @@ class HeaneyMicklethwaiteScraper:
         if not text:
             return "", ""
 
-        text = text.lower().replace(",", "")
+        text = text.lower()
+        text = text.replace(",", "")
+        text = text.replace("ft²", "sq ft")
+        text = text.replace("m²", "sqm")
         text = re.sub(r"[–—−]", "-", text)
 
         size_ft = ""
         size_ac = ""
 
-        m = re.search(r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*(sq\s*ft|sqft|sf)', text)
+        # ===================== SQUARE FEET ===================== #
+        m = re.search(
+            r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*'
+            r'(sq\.?\s*ft\.?|sqft|sf|square\s*feet|square\s*foot|sq\s*feet)',
+            text
+        )
         if m:
             a = float(m.group(1))
             b = float(m.group(2)) if m.group(2) else None
             size_ft = round(min(a, b), 3) if b else round(a, 3)
 
-        m = re.search(r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*(acres?|acre|ac)', text)
+        # ===================== SQUARE METRES ===================== #
+        if not size_ft:
+            m = re.search(
+                r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*'
+                r'(sqm|sq\.?\s*m|m2|square\s*metres|square\s*meters)',
+                text
+            )
+            if m:
+                a = float(m.group(1))
+                b = float(m.group(2)) if m.group(2) else None
+                sqm_value = min(a, b) if b else a
+                size_ft = round(sqm_value * 10.7639, 3)  # convert sqm → sqft
+
+        # ===================== ACRES ===================== #
+        m = re.search(
+            r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*'
+            r'(acres?|acre|ac\.?)',
+            text
+        )
         if m:
             a = float(m.group(1))
             b = float(m.group(2)) if m.group(2) else None
             size_ac = round(min(a, b), 3) if b else round(a, 3)
 
+        # ===================== HECTARES ===================== #
+        if not size_ac:
+            m = re.search(
+                r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*'
+                r'(hectares?|ha)',
+                text
+            )
+            if m:
+                a = float(m.group(1))
+                b = float(m.group(2)) if m.group(2) else None
+                hectare_value = min(a, b) if b else a
+                size_ac = round(hectare_value * 2.47105, 3)  # convert ha → acres
+
         return size_ft, size_ac
+
 
     def extract_numeric_price(self, text, sale_type):
         if sale_type != "For Sale":

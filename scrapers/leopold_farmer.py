@@ -39,13 +39,11 @@ class LeopoldFarmerScraper:
         for page_url in self.BASE_URLS:
             self.driver.get(page_url)
 
-            self.wait.until(EC.presence_of_element_located((
-                By.XPATH, "//a[@name]"
-            )))
-
+            self.wait.until(EC.presence_of_element_located((By.XPATH, "//a[@name]")))
             tree = html.fromstring(self.driver.page_source)
 
-            anchors = tree.xpath("//a[@name]/@name")
+            # Remove duplicate anchors but preserve order
+            anchors = list(dict.fromkeys(tree.xpath("//a[@name]/@name")))
 
             for anchor in anchors:
                 if anchor.lower() == "top":
@@ -71,7 +69,10 @@ class LeopoldFarmerScraper:
 
     def parse_listing(self, tree, anchor, listing_url):
 
-        section = tree.xpath(f"//a[@name='{anchor}']/ancestor::table[1]")
+        # Correct container selection
+        section = tree.xpath(
+            f"//table[@width='650'][.//a[@name='{anchor}']][1]"
+        )
         if not section:
             return None
 
@@ -84,13 +85,24 @@ class LeopoldFarmerScraper:
         if not raw_text:
             return None
 
-        # ---------- DISPLAY ADDRESS ---------- #
-        display_address = self._clean(" ".join(
-            section.xpath(".//b//text()")
+        # ---------- DISPLAY ADDRESS (HEADER ONLY) ---------- #
+        header_text = self._clean(" ".join(
+            section.xpath(
+                ".//a[@name='%s']/following::font[1]/text()" % anchor
+            )
         ))
+
+        display_address = header_text
+
+        display_address = display_address.rstrip("-").strip()
+
 
         # ---------- SALE TYPE ---------- #
         sale_type = self.normalize_sale_type(raw_text)
+
+        if "Sold" == sale_type:
+            return None
+
 
         # ---------- SIZE ---------- #
         size_ft, size_ac = self.extract_size(raw_text)
@@ -101,11 +113,18 @@ class LeopoldFarmerScraper:
         # ---------- PRICE ---------- #
         price = self.extract_numeric_price(raw_text, sale_type)
 
-        # ---------- IMAGES ---------- #
+        # ---------- IMAGES (FILTERED) ---------- #
         property_images = [
             urljoin(self.DOMAIN, src)
             for src in section.xpath(".//img/@src")
-            if src and not src.lower().endswith(("logo.gif", "bullet.gif"))
+            if src
+            and not any(x in src.lower() for x in [
+                "bullet.gif",
+                "logo.gif",
+                "_tn",
+                "tn.jpg",
+                "download",
+            ])
         ]
 
         # ---------- BROCHURE ---------- #
@@ -113,7 +132,6 @@ class LeopoldFarmerScraper:
             urljoin(self.DOMAIN, href)
             for href in section.xpath(".//a[contains(@href,'.pdf')]/@href")
         ]
-
         obj = {
             "listingUrl": listing_url,
             "displayAddress": display_address,
@@ -123,7 +141,7 @@ class LeopoldFarmerScraper:
             "detailedDescription": raw_text,
             "sizeFt": size_ft,
             "sizeAc": size_ac,
-            "postalCode": self.extract_postcode(raw_text),
+            "postalCode": self.extract_postcode(display_address),
             "brochureUrl": brochure_urls,
             "agentCompanyName": "Leopold Farmer",
             "agentName": "",
@@ -135,7 +153,6 @@ class LeopoldFarmerScraper:
             "tenure": tenure,
             "saleType": sale_type,
         }
-
         return obj
 
     # ===================== HELPERS ===================== #
@@ -144,48 +161,47 @@ class LeopoldFarmerScraper:
         if not text:
             return "", ""
 
-        text = text.lower().replace(",", "")
-        text = re.sub(r"[–—−]", "-", text)
+        t = text.lower()
 
         size_ft = ""
         size_ac = ""
 
-        m = re.search(r'(\d+(?:\.\d+)?)\s*(sq\s*ft|sqft|sq\.ft)', text)
+        # sq ft (first occurrence)
+        m = re.search(r'([\d,]+)\s*sq\.?\s*ft', t)
         if m:
-            size_ft = round(float(m.group(1)), 3)
+            size_ft = int(m.group(1).replace(",", ""))
 
-        m = re.search(r'(\d+(?:\.\d+)?)\s*(acres?|acre|ac)', text)
+        # acres ONLY if near "site" or "total site"
+        m = re.search(r'(site|total site)[^\d]*([\d\.]+)\s*acres?', t)
         if m:
-            size_ac = round(float(m.group(1)), 3)
+            size_ac = float(m.group(2))
 
         return size_ft, size_ac
 
+
     def extract_numeric_price(self, text, sale_type):
+        if sale_type == "To Let":
+            return ""
+
         if not text:
             return ""
 
         t = text.lower()
 
-        if any(k in t for k in [
-            "poa", "price on application", "upon application"
-        ]):
+        if "payment of" in t:
+            t = t.split("payment of")[0]
+
+        prices = re.findall(r'£\s*([\d,]+)', t)
+        if not prices:
             return ""
 
-        m = re.search(r'[£€]\s*(\d+(?:,\d{3})*(?:\.\d+)?)\s*m?', text)
-        if not m:
-            return ""
+        values = [int(p.replace(",", "")) for p in prices]
 
-        num = float(m.group(1).replace(",", ""))
+        return str(max(values))
 
-        if "m" in m.group(0).lower():
-            num *= 1_000_000
 
-        return str(int(num))
 
     def extract_tenure(self, text):
-        if not text:
-            return ""
-
         t = text.lower()
         if "freehold" in t:
             return "Freehold"
@@ -207,16 +223,18 @@ class LeopoldFarmerScraper:
     def normalize_sale_type(self, text):
         t = text.lower()
 
-        if "to let" in t or "rent" in t:
+        if "sold" in t:
+            return "Sold"
+        
+   
+        if "sale" in t:
+            return "For Sale"
+
+        if "to let" in t:
             return "To Let"
 
-        if "sold" in t or "freehold" in t or "for sale" in t:
-            return "For Sale"
-
-        if "lease assigned" in t:
-            return "For Sale"
-
         return ""
+
 
     def _clean(self, val):
         return " ".join(val.split()) if val else ""

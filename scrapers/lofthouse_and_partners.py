@@ -35,26 +35,35 @@ class LofthouseAndPartnersScraper:
     def run(self):
         self.driver.get(self.BASE_URL)
 
-        # Wait for listings to load
         self.wait.until(EC.presence_of_element_located((
             By.XPATH,
             '//article[contains(@class,"type-property")]'
         )))
 
-        # Handle "Load More" button
+        # ================= LOAD MORE LOOP ================= #
         while True:
             try:
-                load_more = self.driver.find_element(By.ID, "wpas-load-btn")
-                if load_more.is_displayed():
-                    self.driver.execute_script("arguments[0].click();", load_more)
-                    self.wait.until(EC.presence_of_all_elements_located((
-                        By.XPATH,
-                        '//article[contains(@class,"type-property")]'
-                    )))
-                else:
+                articles_before = len(self.driver.find_elements(
+                    By.XPATH,
+                    '//article[contains(@class,"type-property")]'
+                ))
+
+                load_more_btn = self.driver.find_element(By.ID, "wpas-load-btn")
+
+                if not load_more_btn.is_displayed():
                     break
+
+                self.driver.execute_script("arguments[0].click();", load_more_btn)
+
+                # Wait until new articles are loaded
+                self.wait.until(lambda d: len(d.find_elements(
+                    By.XPATH,
+                    '//article[contains(@class,"type-property")]'
+                )) > articles_before)
+
             except Exception:
                 break
+        # ================================================== #
 
         tree = html.fromstring(self.driver.page_source)
 
@@ -92,7 +101,7 @@ class LofthouseAndPartnersScraper:
 
         tree = html.fromstring(self.driver.page_source)
 
-        # ---------- DISPLAY ADDRESS ---------- #
+        # ---------- ADDRESS ---------- #
         display_address = self._clean(" ".join(
             tree.xpath('//h1[@class="entry-title"]/text()')
         ))
@@ -107,7 +116,7 @@ class LofthouseAndPartnersScraper:
         sale_type = self.normalize_sale_type(price_raw)
         price = self.extract_numeric_price(price_raw, sale_type)
 
-        # ---------- PROPERTY SUB TYPE ---------- #
+        # ---------- PROPERTY TYPE ---------- #
         property_sub_type = ", ".join(
             tree.xpath(
                 '//dt[normalize-space()="Categories"]'
@@ -118,9 +127,15 @@ class LofthouseAndPartnersScraper:
         # ---------- DESCRIPTION ---------- #
         detailed_description = self._clean(" ".join(
             tree.xpath(
-                '//div[contains(@class,"entry-content")]//ul/li/text()'
+                '//div[contains(@class,"entry-content")]//ul/li//text()'
             )
         ))
+
+        # ---------- SIZE (FROM DESCRIPTION) ---------- #
+        size_ft, size_ac = self.extract_size(detailed_description)
+
+        # ---------- TENURE (FROM DESCRIPTION) ---------- #
+        tenure = self.extract_tenure(detailed_description)
 
         # ---------- IMAGE ---------- #
         property_images = [
@@ -146,8 +161,8 @@ class LofthouseAndPartnersScraper:
             "propertySubType": property_sub_type,
             "propertyImage": property_images,
             "detailedDescription": detailed_description,
-            "sizeFt": "",
-            "sizeAc": "",
+            "sizeFt": size_ft,
+            "sizeAc": size_ac,
             "postalCode": self.extract_postcode(display_address),
             "brochureUrl": brochure_urls,
             "agentCompanyName": "Lofthouse and Partners",
@@ -157,13 +172,83 @@ class LofthouseAndPartnersScraper:
             "agentPhone": "",
             "agentStreet": "",
             "agentPostcode": "",
-            "tenure": "",
+            "tenure": tenure,
             "saleType": sale_type,
         }
 
         return obj
 
     # ===================== HELPERS ===================== #
+
+    def extract_size(self, text):
+        if not text:
+            return "", ""
+
+        SQM_TO_SQFT = 10.7639
+        HECTARE_TO_ACRE = 2.47105
+
+        text = text.lower().replace(",", "")
+        text = re.sub(r"[–—−]", "-", text)
+
+        size_ft = ""
+        size_ac = ""
+
+        # ---- SQ FT ----
+        m = re.search(
+            r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*(sq\.?\s*ft\.?|sqft|ft2|ft²|sf)\b',
+            text
+        )
+        if m:
+            a = float(m.group(1))
+            b = float(m.group(2)) if m.group(2) else None
+            size_ft = round(min(a, b), 3) if b else round(a, 3)
+
+        # ---- SQM ----
+        if not size_ft:
+            m = re.search(
+                r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*(sqm|m2|m²)',
+                text
+            )
+            if m:
+                a = float(m.group(1))
+                b = float(m.group(2)) if m.group(2) else None
+                sqm_val = min(a, b) if b else a
+                size_ft = round(sqm_val * SQM_TO_SQFT, 3)
+
+        # ---- ACRES ----
+        m = re.search(
+            r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*(acres?|acre|ac)\b',
+            text
+        )
+        if m:
+            a = float(m.group(1))
+            b = float(m.group(2)) if m.group(2) else None
+            size_ac = round(min(a, b), 3) if b else round(a, 3)
+
+        # ---- HECTARES ----
+        if not size_ac:
+            m = re.search(
+                r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*(hectares?|ha)\b',
+                text
+            )
+            if m:
+                a = float(m.group(1))
+                b = float(m.group(2)) if m.group(2) else None
+                ha_val = min(a, b) if b else a
+                size_ac = round(ha_val * HECTARE_TO_ACRE, 3)
+
+        return size_ft, size_ac
+
+    def extract_tenure(self, text):
+        if not text:
+            return ""
+
+        t = text.lower()
+        if "freehold" in t:
+            return "Freehold"
+        if "leasehold" in t:
+            return "Leasehold"
+        return ""
 
     def extract_numeric_price(self, text, sale_type):
         if sale_type != "For Sale":
@@ -174,22 +259,27 @@ class LofthouseAndPartnersScraper:
 
         t = text.lower()
 
+        # Ignore POA types
         if any(k in t for k in [
             "poa", "price on application", "upon application", "on application"
         ]):
             return ""
 
-        if any(k in t for k in [
-            "per annum", "pa", "per year", "pcm",
-            "per month", "pw", "per week", "rent"
-        ]):
-            return ""
+        # 🔥 IMPORTANT FIX:
+        # Only extract the part BEFORE "or to let"
+        sale_part = t.split("or to let")[0]
 
-        m = re.search(r'£\s*(\d+(?:,\d{3})*(?:\.\d+)?)\s*m?', t)
+        # Remove VAT text
+        sale_part = sale_part.replace("plus vat", "")
+
+        # Find first £ amount in sale portion
+        m = re.search(r'£\s*(\d+(?:,\d{3})*(?:\.\d+)?)\s*m?', sale_part)
         if not m:
             return ""
 
         num = float(m.group(1).replace(",", ""))
+
+        # Handle million shorthand
         if "m" in m.group(0):
             num *= 1_000_000
 

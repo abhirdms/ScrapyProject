@@ -77,8 +77,7 @@ class JohnsonTuckerScraper:
                         obj = self.parse_listing(url)
                         if obj:
                             self.results.append(obj)
-                    except Exception as e:
-                        print("Error:", e)
+                    except Exception:
                         continue
 
                 page += 1
@@ -170,9 +169,6 @@ class JohnsonTuckerScraper:
             "tenure": tenure,
             "saleType": sale_type,
         }
-        print("*****"*10)
-        print(obj)
-        print("*****"*10)
 
 
         return obj

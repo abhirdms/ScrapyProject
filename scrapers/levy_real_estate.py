@@ -49,7 +49,6 @@ class LevyRealEstateScraper:
         )
 
         for href in listing_urls:
-
             url = urljoin(self.DOMAIN, href)
 
             if url in self.seen_urls:
@@ -74,14 +73,18 @@ class LevyRealEstateScraper:
 
         self.wait.until(EC.presence_of_element_located((
             By.XPATH,
-            "//h1"
+            "//h1[contains(@class,'property-title')]"
         )))
 
         tree = html.fromstring(self.driver.page_source)
 
-        # ---------- DISPLAY ADDRESS ---------- #
+        # ---------- DISPLAY ADDRESS (USE H6 ADDRESS SECTION) ---------- #
         display_address = self._clean(" ".join(
-            tree.xpath("//h1[contains(@class,'h1-60')]/text()")
+            tree.xpath("//h6[contains(@class,'address')]/text()")
+        ))
+
+        title_text = self._clean(" ".join(
+            tree.xpath("//h1[contains(@class,'property-title')]/text()")
         ))
 
         # ---------- DESCRIPTION ---------- #
@@ -89,19 +92,20 @@ class LevyRealEstateScraper:
             tree.xpath("//ul/li[contains(@class,'wow')]/text()")
         ))
 
-        # ---------- SIZE (SUM ALL FEATURES) ---------- #
-        size_values = tree.xpath(
-            "//div[@class='feature']/div[@class='value']/text()"
-        )
+        combined_text = f"{title_text} {detailed_description}"
 
-        total_sqft = 0
-        for val in size_values:
-            clean_val = val.replace(",", "")
-            m = re.search(r"(\d+(?:\.\d+)?)", clean_val)
-            if m:
-                total_sqft += float(m.group(1))
+        # ---------- SALE TYPE (HELPER) ---------- #
+        size_ft, size_ac = self.extract_size(combined_text)
 
-        size_ft = str(int(total_sqft)) if total_sqft else ""
+
+        # ---------- TENURE (FROM DESCRIPTION ONLY) ---------- #
+        tenure = self.extract_tenure(combined_text)
+
+
+        # ---------- SALE TYPE (HELPER) ---------- #
+        sale_type = self.normalize_sale_type(display_address + " " + detailed_description)
+
+
 
         # ---------- IMAGES ---------- #
         property_images = [
@@ -112,53 +116,44 @@ class LevyRealEstateScraper:
             if img.strip()
         ]
 
-        # ---------- POSTCODE ---------- #
-        postcode_text = self._clean(" ".join(
-            tree.xpath("//h6[contains(@class,'address')]/text()")
-        ))
+        # ---------- POSTCODE (FROM SAME DISPLAY ADDRESS) ---------- #
+        postcode = self.extract_postcode(display_address)
 
-        postcode = self.extract_postcode(postcode_text)
-
-        # ---------- BROCHURE ---------- #
+        # ---------- BROCHURES ---------- #
         brochure_urls = []
-        brochure = tree.xpath(
+        brochure_links = tree.xpath(
             "//a[contains(@class,'brochure-btn')]/@href"
         )
 
-        if brochure:
-            pdf_url = brochure[0]
-            if pdf_url.startswith("//"):
-                pdf_url = "https:" + pdf_url
-            brochure_urls.append(pdf_url)
+        for pdf in brochure_links:
+            if pdf.startswith("//"):
+                pdf = "https:" + pdf
+            brochure_urls.append(pdf)
 
-        # ---------- AGENT DETAILS ---------- #
-        agent_names = [
-            self._clean(n)
-            for n in tree.xpath(
-                "//div[contains(@class,'team-member')]//h6[contains(@class,'name')]/text()"
-            )
-        ]
+        # ---------- FIRST AGENT ONLY ---------- #
+        first_agent = tree.xpath(
+            "(//div[contains(@class,'team-member')])[1]"
+        )
 
-        agent_emails = [
-            e.replace("mailto:", "").strip()
-            for e in tree.xpath(
-                "//div[contains(@class,'team-member')]//a[starts-with(@href,'mailto:')]/@href"
-            )
-        ]
+        agent_name = ""
+        agent_email = ""
+        agent_phone = ""
 
-        agent_phones = [
-            self._clean(p)
-            for p in tree.xpath(
-                "//div[contains(@class,'team-member')]//p[contains(@class,'contacts')]/span[not(contains(@class,'icon-span'))]/text()"
-            )
-        ]
+        if first_agent:
+            first = first_agent[0]
 
-        # ---------- SALE TYPE (FROM GRID TAG) ---------- #
-        sale_type_raw = self._clean(" ".join(
-            tree.xpath(
-                "//div[contains(@class,'property-box')]//div[contains(@class,'tag')]/text()"
+            name = first.xpath(".//h6[contains(@class,'name')]/text()")
+            agent_name = self._clean(name[0]) if name else ""
+
+            email = first.xpath(".//a[starts-with(@href,'mailto:')]/@href")
+            if email:
+                agent_email = email[0].replace("mailto:", "").strip()
+
+            phone = first.xpath(
+                ".//p[contains(@class,'contacts')]/span[not(contains(@class,'icon-span'))]/text()"
             )
-        ))
+            if phone:
+                agent_phone = self._clean(phone[0])
 
         obj = {
             "listingUrl": url,
@@ -168,23 +163,72 @@ class LevyRealEstateScraper:
             "propertyImage": property_images,
             "detailedDescription": detailed_description,
             "sizeFt": size_ft,
-            "sizeAc": "",
+            "sizeAc": size_ac,
             "postalCode": postcode,
             "brochureUrl": brochure_urls,
             "agentCompanyName": "Levy Real Estate",
-            "agentName": ", ".join(agent_names),
+            "agentName": agent_name,
             "agentCity": "",
-            "agentEmail": ", ".join(agent_emails),
-            "agentPhone": ", ".join(agent_phones),
+            "agentEmail": agent_email,
+            "agentPhone": agent_phone,
             "agentStreet": "",
             "agentPostcode": "",
-            "tenure": "",
-            "saleType": sale_type_raw,
+            "tenure": tenure,
+            "saleType": sale_type,
         }
 
         return obj
 
     # ===================== HELPERS ===================== #
+
+    def extract_size(self, text):
+        if not text:
+            return "", ""
+
+        text = text.lower()
+        text = text.replace(",", "")  # remove commas
+        text = re.sub(r"[–—−]", "-", text)
+
+        size_ft = ""
+        size_ac = ""
+
+        # ---------- SQ FT (handles sq.ft., sq ft, sqft, sf) ---------- #
+        m = re.search(
+            r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*'
+            r'(sq\.?\s*ft\.?|sqft|sf)',
+            text
+        )
+
+        if m:
+            a = float(m.group(1))
+            b = float(m.group(2)) if m.group(2) else None
+            size_ft = round(min(a, b), 3) if b else round(a, 3)
+
+        # ---------- ACRES ---------- #
+        m = re.search(
+            r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*'
+            r'(acres?|acre|ac)',
+            text
+        )
+
+        if m:
+            a = float(m.group(1))
+            b = float(m.group(2)) if m.group(2) else None
+            size_ac = round(min(a, b), 3) if b else round(a, 3)
+
+        return size_ft, size_ac
+
+
+    def extract_tenure(self, text):
+        if not text:
+            return ""
+
+        t = text.lower()
+        if "freehold" in t:
+            return "Freehold"
+        if "leasehold" in t:
+            return "Leasehold"
+        return ""
 
     def extract_postcode(self, text):
         if not text:
@@ -196,6 +240,14 @@ class LevyRealEstateScraper:
         t = text.upper()
         m = re.search(FULL, t) or re.search(PARTIAL, t)
         return m.group() if m else ""
+
+    def normalize_sale_type(self, text):
+        t = text.lower()
+        if "sale" in t:
+            return "For Sale"
+        if "rent" in t or "to let" in t:
+            return "To Let"
+        return ""
 
     def _clean(self, val):
         return " ".join(val.split()) if val else ""

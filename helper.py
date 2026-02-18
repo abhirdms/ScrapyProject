@@ -28,7 +28,7 @@ SCRAPERS = [
     # 'h_m_c_surveyors',
     # 'hough_gould',
     # 'howse_associates',
-    # 'hummerstone_hawkins'
+    # 'hummerstone_hawkins',
     # 'h_r_h_retail',
     # 'j_h_walter',
     # 'j_r_b_t_commercial_property',
@@ -37,11 +37,18 @@ SCRAPERS = [
     # 'jem_property',
     # 'jim_raw_rees',
     # 'john_whiteman_co',
-    # 'johnson_tucker', csv remaining
+    # 'johnson_tucker',
     # 'joiner_cummings',
     # 'justice_co',
-    # 'kavanaghs', office
+    # 'kavanaghs',
     # 'kimmre',
     # 'l_b_l_real_estate',
     # 'leighton_goldhill'
+    # 'leopold_farmer',
+    # 'levy_real_estate',
+    # 'lexicon_c_r_e',
+    # 'lisney', csv remaining
+    # 'lofthouse_and_partners',
+    # 'london_clancy'
 ]
+

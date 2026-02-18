@@ -79,20 +79,25 @@ class LexiconCREScraper:
             )
             property_image = property_image[0] if property_image else ""
 
-            # ---------- SIZE (sqft only) ---------- #
-            size_text = self._clean(" ".join(
+
+            # ---------- FULL DESCRIPTION BLOCK ---------- #
+            description_text = self._clean(" ".join(
                 item.xpath(
-                    ".//section[contains(@class,'av_textblock_section')]"
-                    "//p[contains(.,'sqft')]//text()"
+                    ".//section[contains(@class,'av_textblock_section')]//p//text()"
                 )
             ))
 
-            size_ft = self.extract_size(size_text)
+            # ---------- COMBINE DISPLAY ADDRESS + DESCRIPTION ---------- #
+            combined_text = f"{display_address} {property_sub_type} {description_text}"
+
+            # ---------- SIZE ---------- #
+            size_ft, size_ac = self.extract_size(combined_text)
+
+            # ---------- TENURE ---------- #
+            tenure = self.extract_tenure(combined_text)
 
             # ---------- SALE TYPE ---------- #
-            sale_type = ""
-            if "TO LET" in property_sub_type.upper():
-                sale_type = "To Let"
+            sale_type = self.extract_sale_type(combined_text)
 
             obj = {
                 "listingUrl": pdf_url,
@@ -100,9 +105,9 @@ class LexiconCREScraper:
                 "price": "",
                 "propertySubType": property_sub_type,
                 "propertyImage": property_image,
-                "detailedDescription": "",
+                "detailedDescription": description_text,
                 "sizeFt": size_ft,
-                "sizeAc": "",
+                "sizeAc": size_ac,
                 "postalCode": self.extract_postcode(display_address),
                 "brochureUrl": [pdf_url],
                 "agentCompanyName": "Lexicon CRE",
@@ -112,7 +117,7 @@ class LexiconCREScraper:
                 "agentPhone": "",
                 "agentStreet": "",
                 "agentPostcode": "",
-                "tenure": "",
+                "tenure": tenure,
                 "saleType": sale_type,
             }
 
@@ -123,13 +128,100 @@ class LexiconCREScraper:
 
     # ===================== HELPERS ===================== #
 
-    def extract_size(self, text):
+
+    def extract_sale_type(self, text):
         if not text:
             return ""
 
-        text = text.lower().replace(",", "")
-        match = re.search(r'(\d+(?:\.\d+)?)\s*(sq\s*ft|sqft)', text)
-        return match.group(1) if match else ""
+        t = text.lower()
+
+        if any(x in t for x in ["for sale", "sale",'under offer']):
+            return "For Sale"
+        
+        if any(x in t for x in ["to let", "for rent", "rent", "letting"]):
+            return "To Let"
+
+        return ""
+
+
+    def extract_tenure(self, text):
+        if not text:
+            return ""
+
+        t = text.lower()
+
+        if "freehold" in t:
+            return "Freehold"
+        if "leasehold" in t:
+            return "Leasehold"
+
+        return ""
+
+
+    def extract_size(self, text):
+        if not text:
+            return "", ""
+
+        text = text.lower()
+        text = text.replace(",", "")
+        text = text.replace("ft²", "sq ft")
+        text = text.replace("m²", "sqm")
+        text = re.sub(r"[–—−]", "-", text)
+
+        size_ft = ""
+        size_ac = ""
+
+        # ===================== SQUARE FEET ===================== #
+        m = re.search(
+            r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*'
+            r'(sq\.?\s*ft\.?|sqft|sf|square\s*feet|square\s*foot|sq\s*feet)',
+            text
+        )
+        if m:
+            a = float(m.group(1))
+            b = float(m.group(2)) if m.group(2) else None
+            size_ft = round(min(a, b), 3) if b else round(a, 3)
+
+        # ===================== SQUARE METRES ===================== #
+        if not size_ft:
+            m = re.search(
+                r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*'
+                r'(sqm|sq\.?\s*m|m2|square\s*metres|square\s*meters)',
+                text
+            )
+            if m:
+                a = float(m.group(1))
+                b = float(m.group(2)) if m.group(2) else None
+                sqm_value = min(a, b) if b else a
+                size_ft = round(sqm_value * 10.7639, 3)  # convert sqm → sqft
+
+        # ===================== ACRES ===================== #
+        m = re.search(
+            r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*'
+            r'(acres?|acre|ac\.?)',
+            text
+        )
+        if m:
+            a = float(m.group(1))
+            b = float(m.group(2)) if m.group(2) else None
+            size_ac = round(min(a, b), 3) if b else round(a, 3)
+
+        # ===================== HECTARES ===================== #
+        if not size_ac:
+            m = re.search(
+                r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*'
+                r'(hectares?|ha)',
+                text
+            )
+            if m:
+                a = float(m.group(1))
+                b = float(m.group(2)) if m.group(2) else None
+                hectare_value = min(a, b) if b else a
+                size_ac = round(hectare_value * 2.47105, 3)  # convert ha → acres
+
+        return size_ft, size_ac
+    
+
 
     def extract_postcode(self, text):
         if not text:
