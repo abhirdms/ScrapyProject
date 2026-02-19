@@ -7,15 +7,25 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from urllib.parse import urlparse, urlunparse
 
 from lxml import html
 
 
-class IanScottInternationalScraperAbhi:
+class IanScottInternationalScraper:
     BASE_URLS = {
-        "For Sale": "https://ianscott.com/advanced-search/?status=for-sale",
-        "To Let": "https://ianscott.com/advanced-search/?status=to-let",
+        "For Sale": [
+            "https://ianscott.com/advanced-search/?status=for-sale",
+            "https://ianscott.com/advanced-search/?status=lease-for-sale",
+            "https://ianscott.com/advanced-search/?status=under-offer",
+        ],
+        "To Let": [
+            "https://ianscott.com/advanced-search/?status=to-let",
+            "https://ianscott.com/advanced-search/?status=let",
+            "https://ianscott.com/advanced-search/?status=short-term",
+        ]
     }
+
 
     DOMAIN = "https://ianscott.com"
 
@@ -29,6 +39,7 @@ class IanScottInternationalScraperAbhi:
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--window-size=1920,1080")
+        chrome_options.add_argument("--blink-settings=imagesEnabled=false")
 
         service = Service("/usr/bin/chromedriver")
         self.driver = webdriver.Chrome(service=service, options=chrome_options)
@@ -37,49 +48,66 @@ class IanScottInternationalScraperAbhi:
     # ===================== RUN ===================== #
 
     def run(self):
+        for sale_type, url_list in self.BASE_URLS.items():
 
-        for sale_type, base_url in self.BASE_URLS.items():
-            page = 1
+            for base_url in url_list:
+                page = 1
 
-            while True:
-                page_url = base_url if page == 1 else f"{base_url}&page={page}"
-                self.driver.get(page_url)
+                while True:
 
-                try:
-                    self.wait.until(EC.presence_of_element_located((
-                        By.XPATH,
+                    if page == 1:
+                        page_url = base_url
+                    else:
+                        parsed = urlparse(base_url)
+                        page_url = (
+                            f"{parsed.scheme}://{parsed.netloc}"
+                            f"/advanced-search/page/{page}/"
+                            f"?{parsed.query}"
+                        )
+
+                    self.driver.get(page_url)
+
+                    # Small wait just for page load
+                    self.driver.implicitly_wait(2)
+
+                    tree = html.fromstring(self.driver.page_source)
+
+                    listing_urls = tree.xpath(
                         "//div[contains(@class,'ere-item-wrap')]"
-                    )))
-                except Exception:
-                    break
+                        "//h2[contains(@class,'property-title')]/a/@href"
+                    )
 
-                tree = html.fromstring(self.driver.page_source)
+                    if not listing_urls:
+                        break
 
-                listing_urls = tree.xpath(
-                    "//div[contains(@class,'ere-item-wrap')]"
-                    "//h2[contains(@class,'property-title')]/a/@href"
-                )
+                    tree = html.fromstring(self.driver.page_source)
 
-                if not listing_urls:
-                    break
+                    listing_urls = tree.xpath(
+                        "//div[contains(@class,'ere-item-wrap')]"
+                        "//h2[contains(@class,'property-title')]/a/@href"
+                    )
 
-                for url in listing_urls:
-                    if url in self.seen_urls:
-                        continue
+                    if not listing_urls:
+                        break
 
-                    self.seen_urls.add(url)
+                    for url in listing_urls:
+                        if url in self.seen_urls:
+                            continue
 
-                    try:
-                        obj = self.parse_listing(url, sale_type)
-                        if obj:
-                            self.results.append(obj)
-                    except Exception:
-                        continue
+                        self.seen_urls.add(url)
 
-                page += 1
+                        try:
+                            obj = self.parse_listing(url, sale_type)
+                            if obj:
+                                self.results.append(obj)
+                        except Exception:
+                            continue
+
+                    page += 1
 
         self.driver.quit()
         return self.results
+
 
     # ===================== LISTING ===================== #
 
@@ -89,35 +117,64 @@ class IanScottInternationalScraperAbhi:
 
         self.wait.until(EC.presence_of_element_located((
             By.XPATH,
-            "//h1"
+            "//div[contains(@class,'property-heading')]//h2"
         )))
 
         tree = html.fromstring(self.driver.page_source)
 
         # ---------- DISPLAY ADDRESS ---------- #
         display_address = self._clean(" ".join(
-            tree.xpath("//h1//text()")
+            tree.xpath(
+                "//div[contains(@class,'property-heading')]//h2//text()"
+            )
         ))
 
-        # ---------- PROPERTY SUB TYPE ---------- #
+        # ---------- SALE TYPE VALIDATION ---------- #
+        status_list = [
+            self._clean(s)
+            for s in tree.xpath(
+                "//div[contains(@class,'property-status')]//span/text()"
+            )
+            if s.strip()
+        ]
+
+        if status_list:
+            normalized = [s.lower() for s in status_list]
+
+            if any("sale" in s for s in normalized):
+                sale_type = "For Sale"
+            elif any("let" in s for s in normalized):
+                sale_type = "To Let"
+
+
+        # ---------- PROPERTY TYPE ---------- #
         property_sub_type = ", ".join([
             self._clean(x)
             for x in tree.xpath(
-                "//div[contains(@class,'property-type-list')]"
-                "//a/span/text()"
+                "//span[contains(@class,'ere__property-type')]//a/text()"
             )
         ])
 
         # ---------- DESCRIPTION ---------- #
         detailed_description = self._clean(" ".join(
             tree.xpath(
-                "//div[contains(@class,'property-content')]"
+                "//div[contains(@class,'property-description')]"
+                "//div[contains(@class,'ere-property-element')]"
                 "//text()[normalize-space()]"
             )
         ))
 
-        # ---------- SIZE ---------- #
-        size_ft, size_ac = self.extract_size(detailed_description)
+        # ---------- SIZE (TOTAL PRIORITY) ---------- #
+        total_row = " ".join(
+            tree.xpath(
+                "//table//tr[.//strong[contains(text(),'Total')]]//text()"
+            )
+        )
+
+        size_ft, size_ac = self.extract_size(total_row)
+
+        if not size_ft and not size_ac:
+            size_ft, size_ac = self.extract_size(detailed_description)
 
         # ---------- TENURE ---------- #
         tenure = self.extract_tenure(detailed_description)
@@ -132,17 +189,19 @@ class IanScottInternationalScraperAbhi:
         price = self.extract_price(price_text or detailed_description, sale_type)
 
         # ---------- IMAGES ---------- #
-        property_images = [
-            urljoin(self.DOMAIN, src)
+        property_images = list(set([
+            src
             for src in tree.xpath(
-                "//div[contains(@class,'property-image')]//img/@src"
+                "//div[contains(@class,'single-property-image-main')]//img/@src"
             )
-        ]
+        ]))
 
         # ---------- BROCHURE ---------- #
         brochure_urls = [
             urljoin(self.DOMAIN, href)
-            for href in tree.xpath("//a[contains(@href,'.pdf')]/@href")
+            for href in tree.xpath(
+                "//div[contains(@class,'property-attachments')]//a/@href"
+            )
         ]
 
         obj = {
@@ -156,7 +215,7 @@ class IanScottInternationalScraperAbhi:
             "sizeAc": size_ac,
             "postalCode": self.extract_postcode(display_address),
             "brochureUrl": brochure_urls,
-            "agentCompanyName": "Ian Scott",
+            "agentCompanyName": "Ian Scott International",
             "agentName": "",
             "agentCity": "",
             "agentEmail": "",
@@ -166,6 +225,10 @@ class IanScottInternationalScraperAbhi:
             "tenure": tenure,
             "saleType": sale_type,
         }
+
+        print("*****" * 10)
+        print(obj)
+        print("*****" * 10)
 
         return obj
 
@@ -184,46 +247,24 @@ class IanScottInternationalScraperAbhi:
         size_ft = ""
         size_ac = ""
 
-        m = re.search(
-            r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*(sq\.?\s*ft\.?|sqft|sf)\b',
-            text
-        )
+        m = re.search(r'(\d+(?:\.\d+)?)\s*(sq\.?\s*ft\.?|sqft|sf)\b', text)
         if m:
-            a = float(m.group(1))
-            b = float(m.group(2)) if m.group(2) else None
-            size_ft = round(min(a, b), 3) if b else round(a, 3)
+            size_ft = round(float(m.group(1)), 3)
             return size_ft, size_ac
 
-        m = re.search(
-            r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*(sqm|m2|m²)\b',
-            text
-        )
+        m = re.search(r'(\d+(?:\.\d+)?)\s*(sqm|m2|m²)\b', text)
         if m:
-            a = float(m.group(1))
-            b = float(m.group(2)) if m.group(2) else None
-            val = min(a, b) if b else a
-            size_ft = round(val * SQM_TO_SQFT, 3)
+            size_ft = round(float(m.group(1)) * SQM_TO_SQFT, 3)
             return size_ft, size_ac
 
-        m = re.search(
-            r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*(acres?|acre|ac)\b',
-            text
-        )
+        m = re.search(r'(\d+(?:\.\d+)?)\s*(acres?|acre|ac)\b', text)
         if m:
-            a = float(m.group(1))
-            b = float(m.group(2)) if m.group(2) else None
-            size_ac = round(min(a, b), 3) if b else round(a, 3)
+            size_ac = round(float(m.group(1)), 3)
             return size_ft, size_ac
 
-        m = re.search(
-            r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*(hectares?|hectare|ha)\b',
-            text
-        )
+        m = re.search(r'(\d+(?:\.\d+)?)\s*(hectares?|hectare|ha)\b', text)
         if m:
-            a = float(m.group(1))
-            b = float(m.group(2)) if m.group(2) else None
-            val = min(a, b) if b else a
-            size_ac = round(val * HECTARE_TO_ACRE, 3)
+            size_ac = round(float(m.group(1)) * HECTARE_TO_ACRE, 3)
             return size_ft, size_ac
 
         return size_ft, size_ac
@@ -231,57 +272,28 @@ class IanScottInternationalScraperAbhi:
     def extract_tenure(self, text):
         if not text:
             return ""
-
         t = text.lower()
-
         if "freehold" in t:
             return "Freehold"
-
         if "leasehold" in t:
             return "Leasehold"
-
         return ""
 
     def extract_postcode(self, text):
         if not text:
             return ""
-
         text = text.upper()
-
         full_pattern = r'\b[A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2}\b'
-        partial_pattern = r'\b[A-Z]{1,2}\d{1,2}[A-Z]?\b'
-
         match = re.search(full_pattern, text)
-        if match:
-            return match.group().strip()
-
-        match = re.search(partial_pattern, text)
         return match.group().strip() if match else ""
 
     def extract_price(self, text, sale_type=None):
-        if not text:
+        if not text or (sale_type and sale_type.lower() != "for sale"):
             return ""
 
-        if sale_type and sale_type.lower() != "for sale":
-            return ""
-
-        raw = (
-            text.lower()
-            .replace(",", "")
-            .replace("\u00a0", " ")
-        )
-
-        raw = re.sub(r"(to|–|—)", "-", raw)
+        raw = text.lower().replace(",", "").replace("\u00a0", " ")
 
         prices = []
-
-        rent_keywords = [
-            "per annum", "pa", "pcm",
-            "per calendar month", "per sq ft", "psf"
-        ]
-        for word in rent_keywords:
-            raw = re.sub(rf"£?\s*\d+(?:\.\d+)?\s*{word}", "", raw)
-
         for val in re.findall(r"£\s*(\d{5,})", raw):
             prices.append(float(val))
 
@@ -293,8 +305,7 @@ class IanScottInternationalScraperAbhi:
             prices.append(float(num) * 1_000_000)
 
         if prices:
-            price = min(prices)
-            return str(int(price)) if price.is_integer() else str(price)
+            return str(int(min(prices)))
 
         if any(x in raw for x in [
             "poa",

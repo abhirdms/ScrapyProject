@@ -22,14 +22,31 @@ import csv
 
 CSV_FILE_NAME = os.path.join(BASE_DIR, "website_data", "data.csv")
 
+
+def load_existing_data():
+    existing_map = {}
+
+    if os.path.exists(CSV_FILE_NAME):
+        with open(CSV_FILE_NAME, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                url = row.get("listingUrl")
+                if url:
+                    existing_map[url] = row
+
+    return existing_map
+
+
 def run_all_scrapers():
     print("=" * 70)
     print("STARTING PROPERTY SCRAPING")
     print("=" * 70)
     print()
 
-    all_results = []
+    today = datetime.now().strftime("%Y-%m-%d")
     total_properties = 0
+
+    existing_map = load_existing_data()
 
     for scraper_name in SCRAPERS:
         print(f"Running scraper: {scraper_name}")
@@ -43,12 +60,58 @@ def run_all_scrapers():
             scraper = scraper_class()
             properties = scraper.run()
 
-            if properties:
-                all_results.extend(properties)
-                total_properties += len(properties)
-                print(f"✓ {scraper_name}: Scraped {len(properties)} properties")
-            else:
+            if not properties:
                 print(f"✗ {scraper_name}: No properties found")
+                continue
+
+            # Get agent name from first row (assumed consistent per scraper)
+            agent_name = properties[0].get("agentCompanyName", "")
+
+            current_urls = set()
+            agent_existing_urls = {
+                url for url, row in existing_map.items()
+                if row.get("agentCompanyName") == agent_name
+            }
+
+            # ---------------- HANDLE NEW / OLD ---------------- #
+
+            for row in properties:
+                listing_url = row.get("listingUrl")
+                if not listing_url:
+                    continue
+
+                current_urls.add(listing_url)
+                row["date"] = today
+
+                if listing_url in existing_map:
+                    row["status"] = "Old"
+                else:
+                    row["status"] = "New"
+
+                existing_map[listing_url] = row
+
+            # ---------------- HANDLE DELETED ---------------- #
+
+            deleted_urls = agent_existing_urls - current_urls
+
+            for url in deleted_urls:
+                existing_row = existing_map.get(url)
+                if existing_row:
+                    existing_row["status"] = "Deleted"
+                    existing_row["date"] = today
+                    existing_map[url] = existing_row
+
+            # ---------------- SAVE AFTER EACH SCRAPER ---------------- #
+
+            store_data_to_csv(
+                list(existing_map.values()),
+                filepath=CSV_FILE_NAME,
+                mode="overwrite"
+            )
+
+            total_properties += len(properties)
+
+            print(f"✓ {scraper_name}: Scraped {len(properties)} properties")
 
         except Exception as e:
             print(f"✗ Error running {scraper_name}: {e}")
@@ -57,53 +120,9 @@ def run_all_scrapers():
 
         print()
 
-    today = datetime.now().strftime("%Y-%m-%d")
-
-    previous_data = []
-    previous_urls = set()
-
-    if os.path.exists(CSV_FILE_NAME):
-        with open(CSV_FILE_NAME, "r", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            previous_data = list(reader)
-            previous_urls = {row["listingUrl"] for row in previous_data if row.get("listingUrl")}
-
-    current_urls = {row["listingUrl"] for row in all_results if row.get("listingUrl")}
-
-    final_data = []
-
-    # Mark New / Old
-    for row in all_results:
-        listing_url = row.get("listingUrl")
-
-        row["date"] = today
-
-        if listing_url in previous_urls:
-            row["status"] = "Old"
-        else:
-            row["status"] = "New"
-
-        final_data.append(row)
-
-    # Mark Deleted
-    deleted_urls = previous_urls - current_urls
-
-    for old_row in previous_data:
-        if old_row.get("listingUrl") in deleted_urls:
-            old_row["date"] = today
-            old_row["status"] = "Deleted"
-            final_data.append(old_row)
-
-    if final_data:
-        store_data_to_csv(
-            final_data,
-            filepath=CSV_FILE_NAME,
-            mode="overwrite"
-        )
-
     print("=" * 70)
     print("ALL SCRAPERS COMPLETED")
-    print(f"Total properties scraped: {total_properties}")
+    print(f"Total properties processed this run: {total_properties}")
     print(f"Data saved to: {CSV_FILE_NAME}")
     print("=" * 70)
 

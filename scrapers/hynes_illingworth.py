@@ -11,11 +11,14 @@ from selenium.webdriver.support import expected_conditions as EC
 from lxml import html
 
 
-class HynesIllingworthScraperAbhi:
-    BASE_URL = "https://www.hynesillingworth.co.uk/properties/"
-    DOMAIN = "https://www.hynesillingworth.co.uk"
+class HynesIllingworthScraper:
+
+    BASE_URL = "https://www.hynesillingworth.com/properties"
+    DOMAIN = "https://www.hynesillingworth.com"
+    AGENT_COMPANY = "Hynes Illingworth"
 
     def __init__(self):
+
         self.results = []
         self.seen_urls = set()
 
@@ -25,14 +28,24 @@ class HynesIllingworthScraperAbhi:
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--window-size=1920,1080")
+        chrome_options.add_argument(
+            "--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
+        )
+        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+
+
 
         service = Service("/usr/bin/chromedriver")
         self.driver = webdriver.Chrome(service=service, options=chrome_options)
         self.wait = WebDriverWait(self.driver, 20)
 
-    # ===================== RUN ===================== #
+    # ============================================================
+    # RUN
+    # ============================================================
 
     def run(self):
+
         self.driver.get(self.BASE_URL)
 
         self.wait.until(EC.presence_of_element_located((
@@ -42,20 +55,27 @@ class HynesIllingworthScraperAbhi:
 
         tree = html.fromstring(self.driver.page_source)
 
-        listing_urls = tree.xpath(
+        property_blocks = tree.xpath(
             "//div[contains(@class,'property-card')]"
-            "//a[contains(@class,'property-overlay')]/@href"
         )
 
-        for href in listing_urls:
-            url = urljoin(self.DOMAIN, href)
+        for block in property_blocks:
 
-            if url in self.seen_urls:
+            relative_url = block.xpath(
+                ".//a[contains(@class,'property-overlay')]/@href"
+            )
+            if not relative_url:
                 continue
-            self.seen_urls.add(url)
+
+            listing_url = urljoin(self.DOMAIN, relative_url[0])
+
+            if listing_url in self.seen_urls:
+                continue
+
+            self.seen_urls.add(listing_url)
 
             try:
-                obj = self.parse_listing(url)
+                obj = self.parse_listing(listing_url, block)
                 if obj:
                     self.results.append(obj)
             except Exception:
@@ -64,113 +84,111 @@ class HynesIllingworthScraperAbhi:
         self.driver.quit()
         return self.results
 
-    # ===================== LISTING ===================== #
+    # ============================================================
+    # DETAIL PAGE
+    # ============================================================
 
-    def parse_listing(self, url):
+    def parse_listing(self, url, block):
+
         self.driver.get(url)
 
         self.wait.until(EC.presence_of_element_located((
             By.XPATH,
-            "//div[contains(@class,'header-grid-2-col')]//h1"
+            "//body"
         )))
 
         tree = html.fromstring(self.driver.page_source)
 
-        # ---------- DISPLAY ADDRESS ---------- #
+        # ---------------- ADDRESS ----------------
         display_address = self._clean(" ".join(
-            tree.xpath(
-                "//div[contains(@class,'header-grid-2-col')]//h1/text()"
-            )
+            block.xpath(".//h4[contains(@class,'property-name')]/text()")
         ))
 
-        # ---------- PROPERTY IMAGE ---------- #
-        image_styles = tree.xpath(
-            "//div[contains(@class,'property-card-img')]/@style"
+
+        # ---------------- IMAGE ----------------
+        image_style = block.xpath(
+            ".//div[contains(@class,'property-card-img')]/@style"
         )
 
         property_images = []
-        for style in image_styles:
-            m = re.search(r'url\("(.*?)"\)', style)
+        if image_style:
+            m = re.search(r'url\("(.*?)"\)', image_style[0])
             if m:
                 property_images.append(m.group(1))
 
-        # ---------- DESCRIPTION ---------- #
+
+        # ---------------- DESCRIPTION ----------------
         detailed_description = self._clean(" ".join(
             tree.xpath(
-                "//div[contains(@class,'property-details-wrapper')]"
+                "//div[contains(@class,'property-detail') "
+                "and not(contains(@class,'w-condition-invisible')) "
+                "and not(.//h4[normalize-space()='Service Charge']) "
+                "and not(.//h4[normalize-space()='Viewing'])]"
                 "//text()[normalize-space()]"
             )
         ))
 
-        # ---------- SIZE ---------- #
-        size_ft = ""
-        size_ac = ""
+        # ---------------- AGENT DETAILS (FROM VIEWING SECTION) ----------------
+        agent_name = ""
+        agent_phone = ""
+        agent_email = ""
 
-        strong_sizes = tree.xpath(
-            "//h4[normalize-space()='Accomodation']"
-            "/following-sibling::div//strong/text()"
+        viewing_block = tree.xpath(
+            "//div[contains(@class,'property-detail') and .//h4[normalize-space()='Viewing']]"
         )
 
-        para_sizes = tree.xpath(
-            "//h4[normalize-space()='Accomodation']"
-            "/following-sibling::div//p[contains(.,'sq ft')]/text()"
-        )
+        if viewing_block:
+            block = viewing_block[0]
 
-        size_text = " ".join(strong_sizes + para_sizes)
-        size_ft, size_ac = self.extract_size(size_text)
+            # Extract FULL paragraph text (not only direct text nodes)
+            lines = [
+                self._clean(" ".join(p.xpath(".//text()")))
+                for p in block.xpath(".//div[contains(@class,'w-richtext')]//p")
+            ]
 
-        # ---------- TENURE ---------- #
-        tenure = self._clean(" ".join(
-            tree.xpath(
-                "//h4[normalize-space()='Lease']"
-                "/following-sibling::p/text()"
-            )
-        )) or self.extract_tenure(detailed_description)
+            for line in lines:
 
-        # ---------- PRICE ---------- #
-        price_text = self._clean(" ".join(
-            tree.xpath(
-                "//div[h4[normalize-space()='Rent & Review']]//p/text()"
-            )
-        ))
+                lower_line = line.lower()
 
-        sale_type = self.normalize_sale_type(
-            " ".join(
-                tree.xpath(
-                    "//img[contains(@class,'location-map')]/@src"
-                )
-            )
-        )
+                # -------- NAME --------
+                if lower_line.startswith("a:") or lower_line.startswith("attn"):
+                    value = line.split(":", 1)[-1].strip()
+                    agent_name = value.split(" or ")[0].strip()
 
-        price = self.extract_numeric_price(price_text or detailed_description, sale_type)
+                # -------- PHONE --------
+                elif lower_line.startswith("t:") or lower_line.startswith("tel"):
+                    value = line.split(":", 1)[-1].strip()
+                    phones = re.findall(r'\d[\d\s]+', value)
+                    if phones:
+                        agent_phone = phones[0].strip()
 
-        # ---------- BROCHURE ---------- #
+                # -------- EMAIL --------
+                elif lower_line.startswith("e:") or lower_line.startswith("mail"):
+                    value = line.split(":", 1)[-1].strip()
+                    emails = re.findall(r'[\w\.-]+@[\w\.-]+\.\w+', value)
+                    if emails:
+                        agent_email = emails[0].strip()
+
+
+
+
+        # ---------------- SIZE ----------------
+        size_ft, size_ac = self.extract_size(detailed_description)
+
+        # ---------------- TENURE ----------------
+        tenure = self.extract_tenure(detailed_description)
+
+        # ---------------- SALE TYPE ----------------
+        sale_type = self.normalize_sale_type(detailed_description)
+
+        # ---------------- PRICE ----------------
+        price = self.extract_numeric_price(detailed_description, sale_type)
+
+        # ---------------- BROCHURE ----------------
         brochure_urls = [
             urljoin(self.DOMAIN, href)
-            for href in tree.xpath("//a[contains(@class,'download')]/@href")
+            for href in tree.xpath("//a[contains(@href,'.pdf')]/@href")
         ]
-
-        # ---------- AGENT DETAILS ---------- #
-        viewing_text = " ".join(
-            tree.xpath(
-                "//h4[normalize-space()='Viewing']"
-                "/following-sibling::div//text()[normalize-space()]"
-            )
-        )
-
-        agent_name = ""
-        agent_email = ""
-        agent_phone = ""
-
-        email_match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', viewing_text)
-        if email_match:
-            agent_email = email_match.group()
-
-        phone_match = re.search(r'\+?\d[\d\s]{7,}', viewing_text)
-        if phone_match:
-            agent_phone = phone_match.group().strip()
-
-        agent_name = viewing_text.replace(agent_email, "").replace(agent_phone, "").strip()
 
         obj = {
             "listingUrl": url,
@@ -183,9 +201,9 @@ class HynesIllingworthScraperAbhi:
             "sizeAc": size_ac,
             "postalCode": self.extract_postcode(display_address),
             "brochureUrl": brochure_urls,
-            "agentCompanyName": "Hynes Illingworth",
-            "agentName": agent_name,
+            "agentCompanyName": self.AGENT_COMPANY,
             "agentCity": "",
+            "agentName": agent_name,
             "agentEmail": agent_email,
             "agentPhone": agent_phone,
             "agentStreet": "",
@@ -196,7 +214,9 @@ class HynesIllingworthScraperAbhi:
 
         return obj
 
-    # ===================== HELPERS ===================== #
+    # ============================================================
+    # HELPERS
+    # ============================================================
 
     def extract_size(self, text):
         if not text:
@@ -208,21 +228,18 @@ class HynesIllingworthScraperAbhi:
         size_ft = ""
         size_ac = ""
 
-        m = re.search(r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*(sq\s*ft|sqft|sf)', text)
+        m = re.search(r'(\d+(?:\.\d+)?)\s*(sq\s*ft|sqft|sf)', text)
         if m:
-            a = float(m.group(1))
-            b = float(m.group(2)) if m.group(2) else None
-            size_ft = round(min(a, b), 3) if b else round(a, 3)
+            size_ft = float(m.group(1))
 
-        m = re.search(r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*(acres?|acre|ac)', text)
+        m = re.search(r'(\d+(?:\.\d+)?)\s*(acres?|acre|ac)', text)
         if m:
-            a = float(m.group(1))
-            b = float(m.group(2)) if m.group(2) else None
-            size_ac = round(min(a, b), 3) if b else round(a, 3)
+            size_ac = float(m.group(1))
 
         return size_ft, size_ac
 
     def extract_numeric_price(self, text, sale_type):
+
         if sale_type != "For Sale":
             return ""
 
@@ -232,22 +249,21 @@ class HynesIllingworthScraperAbhi:
         t = text.lower()
 
         if any(k in t for k in [
-            "poa", "price on application", "upon application",
-            "on application", "subject to contract"
+            "poa", "price on application", "subject to contract"
         ]):
             return ""
 
         if any(k in t for k in [
-            "per annum", "pa", "per year", "pcm",
-            "per month", "pw", "per week", "rent"
+            "per annum", "pa", "pcm", "rent", "per month"
         ]):
             return ""
 
-        m = re.search(r'[£€]\s*(\d+(?:,\d{3})*(?:\.\d+)?)\s*m?', t)
+        m = re.search(r'£\s*(\d+(?:,\d{3})*(?:\.\d+)?)\s*m?', t)
         if not m:
             return ""
 
         num = float(m.group(1).replace(",", ""))
+
         if "m" in m.group(0):
             num *= 1_000_000
 
@@ -277,9 +293,9 @@ class HynesIllingworthScraperAbhi:
 
     def normalize_sale_type(self, text):
         t = text.lower()
-        if "sale" in t:
+        if "for sale" in t:
             return "For Sale"
-        if "rent" in t or "let" in t:
+        if "to let" in t or "rent" in t:
             return "To Let"
         return ""
 

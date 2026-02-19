@@ -1,4 +1,4 @@
-
+import re
 from urllib.parse import urljoin
 
 from selenium import webdriver
@@ -11,9 +11,10 @@ from selenium.webdriver.support import expected_conditions as EC
 from lxml import html
 
 
-class ImpeyCompanyScraperAbhi:
-    BASE_URL = "https://www.impey.co.uk/property/"
+class ImpeyCompanyScraper:
+    BASE_URL = "https://www.impey.co.uk/property-search/"
     DOMAIN = "https://www.impey.co.uk"
+    AGENT_COMPANY = "Impey & Company"
 
     def __init__(self):
         self.results = []
@@ -25,6 +26,7 @@ class ImpeyCompanyScraperAbhi:
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--window-size=1920,1080")
+        chrome_options.add_argument("--blink-settings=imagesEnabled=false")
 
         service = Service("/usr/bin/chromedriver")
         self.driver = webdriver.Chrome(service=service, options=chrome_options)
@@ -34,17 +36,19 @@ class ImpeyCompanyScraperAbhi:
 
     def run(self):
 
-        self.driver.get("https://www.impey.co.uk/available-properties/")
+        self.driver.get(self.BASE_URL)
 
-        self.wait.until(EC.presence_of_element_located((
-            By.XPATH,
-            "//article[contains(@class,'property-result-container')]"
-        )))
+        self.wait.until(
+            EC.presence_of_element_located(
+                (By.XPATH, "//article[contains(@class,'property-result-container')]//a[@href]")
+            )
+        )
+
 
         tree = html.fromstring(self.driver.page_source)
 
         listing_urls = tree.xpath(
-            "//article[contains(@class,'property-result-container')]//a/@href"
+            "//article[contains(@class,'property-result-container')]/a/@href"
         )
 
         for url in listing_urls:
@@ -59,7 +63,8 @@ class ImpeyCompanyScraperAbhi:
                 obj = self.parse_listing(url)
                 if obj:
                     self.results.append(obj)
-            except Exception:
+            except Exception as e:
+                print(f"Error parsing {url}: {e}")
                 continue
 
         self.driver.quit()
@@ -71,10 +76,12 @@ class ImpeyCompanyScraperAbhi:
 
         self.driver.get(url)
 
-        self.wait.until(EC.presence_of_element_located((
-            By.XPATH,
-            "//div[contains(@class,'c-Banner_Box')]/h2"
-        )))
+        self.wait.until(
+            EC.presence_of_element_located(
+                (By.XPATH, "//summary[@id='property_meta']")
+            )
+        )
+
 
         tree = html.fromstring(self.driver.page_source)
 
@@ -82,18 +89,19 @@ class ImpeyCompanyScraperAbhi:
             tree.xpath("//div[contains(@class,'c-Banner_Box')]/h2/text()")
         ))
 
-        sale_type_raw = self._clean(" ".join(
+        tenure_text = self._clean(" ".join(
             tree.xpath("//p[@id='tenure']/text()")
         ))
 
-        sale_type = self.normalize_sale_type(sale_type_raw)
+        sale_type = self.normalize_sale_type(tenure_text)
+        tenure = extract_tenure(tenure_text)
 
         property_sub_type = self._clean(" ".join(
             tree.xpath("//summary[@id='property_meta']/p[1]/text()")
         ))
 
         detailed_description = self._clean(" ".join(
-            tree.xpath("//main[contains(@class,'entry-content')]/p/text()")
+            tree.xpath("//main[contains(@class,'entry-content')]//p//text()")
         ))
 
         size_text = self._clean(" ".join(
@@ -110,10 +118,14 @@ class ImpeyCompanyScraperAbhi:
 
         property_images = [
             urljoin(self.DOMAIN, src)
-            for src in tree.xpath("//li//div[contains(@class,'image_group')]//img/@src")
+            for src in tree.xpath("//div[contains(@class,'image_group')]//img/@src")
+            if src and src.strip()
         ]
 
-        brochure_urls = []
+        brochure_urls = [
+            urljoin(self.DOMAIN, href)
+            for href in tree.xpath("//a[contains(@href,'.pdf')]/@href")
+        ]
 
         obj = {
             "listingUrl": url,
@@ -126,14 +138,14 @@ class ImpeyCompanyScraperAbhi:
             "sizeAc": size_ac,
             "postalCode": extract_postcode(display_address),
             "brochureUrl": brochure_urls,
-            "agentCompanyName": "Impey & Company",
+            "agentCompanyName": self.AGENT_COMPANY,
             "agentName": "",
             "agentCity": "",
             "agentEmail": "",
             "agentPhone": "",
             "agentStreet": "",
             "agentPostcode": "",
-            "tenure": "",
+            "tenure": tenure,
             "saleType": sale_type,
         }
 
@@ -142,21 +154,24 @@ class ImpeyCompanyScraperAbhi:
     # ===================== HELPERS ===================== #
 
     def normalize_sale_type(self, text):
+        if not text:
+            return ""
+
         t = text.lower()
+
         if "sale" in t:
             return "For Sale"
+
         if "let" in t:
             return "To Let"
+
         return ""
 
     def _clean(self, val):
         return " ".join(val.split()) if val else ""
 
 
-# size_extraction 
-
-import re
-
+# ===================== SIZE ===================== #
 
 def extract_size(text: str):
 
@@ -217,12 +232,12 @@ def extract_size(text: str):
     return size_ft, size_ac
 
 
-################################## lease ###############################
+# ===================== TENURE ===================== #
 
 def extract_tenure(text: str):
     if not text:
         return ""
-    
+
     t = text.lower()
 
     if "freehold" in t:
@@ -234,7 +249,7 @@ def extract_tenure(text: str):
     return ""
 
 
-################################# postcode
+# ===================== POSTCODE ===================== #
 
 def extract_postcode(text: str):
     if not text:
@@ -253,9 +268,10 @@ def extract_postcode(text: str):
     return match.group().strip() if match else ""
 
 
-#################################### price ##############################
+# ===================== PRICE ===================== #
 
 def extract_price(text: str, sale_type: str = None):
+
     if not text:
         return ""
 
@@ -276,16 +292,18 @@ def extract_price(text: str, sale_type: str = None):
         "per annum", "pa", "pcm",
         "per calendar month", "per sq ft", "psf"
     ]
+
     for word in rent_keywords:
         raw = re.sub(rf"£?\s*\d+(?:\.\d+)?\s*{word}", "", raw)
 
-    for val in re.findall(r"£\s*(\d{5,})", raw):
+    for val in re.findall(r"£\s*(\d{4,})", raw):
         prices.append(float(val))
 
     million_matches = re.findall(
         r"(?:£\s*)?(\d+(?:\.\d+)?)\s*(million|m)\b",
         raw
     )
+
     for num, _ in million_matches:
         prices.append(float(num) * 1_000_000)
 
@@ -302,4 +320,3 @@ def extract_price(text: str, sale_type: str = None):
         return ""
 
     return ""
-

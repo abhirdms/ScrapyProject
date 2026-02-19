@@ -11,8 +11,12 @@ from selenium.webdriver.support import expected_conditions as EC
 from lxml import html
 
 
-class InglebyTriceScraperAbhi:
-    BASE_URL = "https://inglebytrice.co.uk/conventional-properties/"
+class InglebyTriceScraper:
+    BASE_URLS = [
+        "https://inglebytrice.co.uk/conventional-properties/",
+        "https://inglebytrice.co.uk/managed-properties/",
+    ]
+
     DOMAIN = "https://inglebytrice.co.uk"
 
     def __init__(self):
@@ -25,6 +29,7 @@ class InglebyTriceScraperAbhi:
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--window-size=1920,1080")
+        chrome_options.add_argument("--blink-settings=imagesEnabled=false")
 
         service = Service("/usr/bin/chromedriver")
         self.driver = webdriver.Chrome(service=service, options=chrome_options)
@@ -33,48 +38,99 @@ class InglebyTriceScraperAbhi:
     # ===================== RUN ===================== #
 
     def run(self):
+        for base_url in self.BASE_URLS:
 
-        self.driver.get(self.BASE_URL)
+            self.driver.get(base_url)
 
-        # Handle Load More button
-        while True:
-            try:
-                btn = self.driver.find_element(By.ID, "load_more")
-                self.driver.execute_script("arguments[0].click();", btn)
-                self.driver.implicitly_wait(2)
-            except Exception:
-                break
+            self.wait.until(EC.presence_of_element_located((
+                By.XPATH,
+                "//div[contains(@class,'product-listing-box')]"
+            )))
 
-        self.wait.until(EC.presence_of_element_located((
-            By.XPATH,
-            "//a[contains(@class,'view-btn')]"
-        )))
+            import time
 
-        tree = html.fromstring(self.driver.page_source)
+            while True:
+                cards_before = self.driver.find_elements(
+                    By.XPATH,
+                    "//div[contains(@class,'product-listing-box')]"
+                )
+                count_before = len(cards_before)
 
-        listing_urls = tree.xpath("//a[contains(@class,'view-btn')]/@href")
+                try:
+                    load_more = self.wait.until(
+                        EC.element_to_be_clickable((By.ID, "load_more"))
+                    )
 
-        for href in listing_urls:
-            url = urljoin(self.DOMAIN, href)
+                    self.driver.execute_script(
+                        "arguments[0].scrollIntoView({block:'center'});", load_more
+                    )
+                    self.driver.execute_script("arguments[0].click();", load_more)
 
-            if url in self.seen_urls:
-                continue
+                except Exception:
+                    break
 
-            self.seen_urls.add(url)
+                try:
+                    WebDriverWait(self.driver, 10).until(
+                        lambda d: len(
+                            d.find_elements(
+                                By.XPATH,
+                                "//div[contains(@class,'product-listing-box')]"
+                            )
+                        ) > count_before
+                    )
+                except:
+                    break
 
-            try:
-                obj = self.parse_listing(url)
-                if obj:
-                    self.results.append(obj)
-            except Exception:
-                continue
+                time.sleep(1)
+
+            # ---------- Parse Cards ---------- #
+            tree = html.fromstring(self.driver.page_source)
+            cards = tree.xpath("//div[contains(@class,'product-listing-box')]")
+
+            for card in cards:
+                href = card.xpath(".//a[contains(@class,'view-btn')]/@href")
+                if not href:
+                    continue
+
+                url = urljoin(self.DOMAIN, href[0])
+
+                if url in self.seen_urls:
+                    continue
+
+                self.seen_urls.add(url)
+
+                size_text = self._clean(" ".join(
+                    card.xpath(".//div[contains(@class,'product-listing-content')]//p[1]//text()")
+                ))
+
+                price_text = self._clean(" ".join(
+                    card.xpath(".//div[contains(@class,'product-listing-content')]//h5//text()")
+                ))
+
+                brochure_card = card.xpath(
+                    ".//a[contains(@class,'download-btn')]/@href"
+                )
+
+                try:
+                    obj = self.parse_listing(url, size_text, price_text, brochure_card)
+                    if obj:
+                        self.results.append(obj)
+                except Exception:
+                    continue
 
         self.driver.quit()
         return self.results
 
+
+
+
+
+
+
+
     # ===================== LISTING ===================== #
 
-    def parse_listing(self, url):
+    def parse_listing(self, url, size_text, price_text, brochure_card):
 
         self.driver.get(url)
 
@@ -85,7 +141,7 @@ class InglebyTriceScraperAbhi:
 
         tree = html.fromstring(self.driver.page_source)
 
-        # ---------- DISPLAY ADDRESS ---------- #
+        # ---------- ADDRESS ---------- #
         address_1 = self._clean(" ".join(
             tree.xpath("//div[contains(@class,'property-single-heading')]/h1/text()")
         ))
@@ -97,14 +153,7 @@ class InglebyTriceScraperAbhi:
         display_address = f"{address_1} {address_2}".strip()
 
         # ---------- SALE TYPE ---------- #
-        sale_type_raw = self._clean(" ".join(
-            tree.xpath("//div[contains(@class,'property-single-heading')]//span/text()")
-        ))
-
-        sale_type = self.normalize_sale_type(sale_type_raw)
-
-        # ---------- PROPERTY SUB TYPE ---------- #
-        property_sub_type = ""
+        sale_type = self.normalize_sale_type(price_text)
 
         # ---------- DESCRIPTION ---------- #
         details_text = tree.xpath(
@@ -119,18 +168,10 @@ class InglebyTriceScraperAbhi:
 
         detailed_description = self._clean(" ".join(details_text + spec_text))
 
-        # ---------- SIZE (from outer listing) ---------- #
-        size_text = self._clean(" ".join(
-            tree.xpath("//div[contains(@class,'product-listing-content')]//p[1]/text()")
-        ))
-
+        # ---------- SIZE ---------- #
         size_ft, size_ac = self.extract_size(size_text)
 
-        # ---------- PRICE (from outer listing) ---------- #
-        price_text = self._clean(" ".join(
-            tree.xpath("//div[contains(@class,'product-listing-content')]//h5/text()")
-        ))
-
+        # ---------- PRICE ---------- #
         price = self.extract_numeric_price(price_text, sale_type)
 
         # ---------- IMAGES ---------- #
@@ -141,34 +182,49 @@ class InglebyTriceScraperAbhi:
             )
         ]
 
-        # ---------- BROCHURES ---------- #
-        brochure_urls = [
-            urljoin(self.DOMAIN, href)
-            for href in tree.xpath(
-                "//h3[normalize-space()='Downloads']"
-                "/following-sibling::ul[contains(@class,'download-sec-ul')]"
-                "//a/@href"
-            )
-        ]
+        # ---------- BROCHURE ---------- #
+        brochure_detail = tree.xpath(
+            "//h3[normalize-space()='Downloads']"
+            "/following-sibling::ul[contains(@class,'download-sec-ul')]"
+            "//a/@href"
+        )
 
-        # ---------- AGENT ---------- #
-        agent_name = self._clean(" ".join(
-            tree.xpath("//div[contains(@class,'next-steps-info')]//h5/text()")
-        ))
+        brochure_urls = []
 
-        agent_email = self._clean(" ".join(
-            tree.xpath("//div[contains(@class,'next-steps-info')]//a[contains(@href,'mailto:')]/@href")
-        )).replace("mailto:", "")
+        if brochure_detail:
+            brochure_urls = [urljoin(self.DOMAIN, b) for b in brochure_detail]
+        elif brochure_card:
+            brochure_urls = [urljoin(self.DOMAIN, brochure_card[0])]
 
-        agent_phone = self._clean(" ".join(
-            tree.xpath("//div[contains(@class,'next-steps-info')]//a[contains(@href,'tel:')]/text()")
-        ))
+        # ---------- AGENT (ONLY FIRST) ---------- #
+
+        agent_name = ""
+        agent_email = ""
+        agent_phone = ""
+
+        names = tree.xpath("//div[contains(@class,'next-steps-info')]//h5/text()")
+        emails = tree.xpath("//div[contains(@class,'next-steps-info')]//a[contains(@href,'mailto:')]/@href")
+        phones = tree.xpath("//div[contains(@class,'next-steps-info')]//a[contains(@href,'tel:')]/text()")
+
+        if names:
+            agent_name = self._clean(names[0])
+
+        if emails:
+            agent_email = self._clean(emails[0].replace("mailto:", ""))
+
+        if phones:
+            agent_phone = self._clean(phones[0])
+
+
+        tenure = self.extract_tenure(detailed_description)
+
+
 
         obj = {
             "listingUrl": url,
             "displayAddress": display_address,
             "price": price,
-            "propertySubType": property_sub_type,
+            "propertySubType": "",
             "propertyImage": property_images,
             "detailedDescription": detailed_description,
             "sizeFt": size_ft,
@@ -182,7 +238,7 @@ class InglebyTriceScraperAbhi:
             "agentPhone": agent_phone,
             "agentStreet": "",
             "agentPostcode": "",
-            "tenure": "",
+            "tenure": tenure,
             "saleType": sale_type,
         }
 
@@ -204,6 +260,7 @@ class InglebyTriceScraperAbhi:
             r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*(sq\.?\s*ft\.?|sqft|sf)',
             text
         )
+
         if m:
             a = float(m.group(1))
             b = float(m.group(2)) if m.group(2) else None
@@ -249,12 +306,48 @@ class InglebyTriceScraperAbhi:
         return m.group() if m else ""
 
     def normalize_sale_type(self, text):
+        if not text:
+            return ""
+
         t = text.lower()
-        if "sale" in t:
-            return "For Sale"
-        if "let" in t:
+
+        # Leasing indicator used on this site
+        if "rent on application" in t:
             return "To Let"
+
+        if "rent" in t:
+            return "To Let"
+
+        if "per sq" in t or "pa" in t:
+            return "To Let"
+
+        if "£" in t and "per" not in t:
+            return "For Sale"
+
         return ""
+    
+
+    def extract_tenure(self, text):
+        if not text:
+            return ""
+
+        t = text.lower()
+
+        if "freehold" in t:
+            return "Freehold"
+
+        if "leasehold" in t:
+            return "Leasehold"
+
+        if "virtual freehold" in t:
+            return "Virtual Freehold"
+
+        if "long leasehold" in t:
+            return "Leasehold"
+
+        return ""
+
+
 
     def _clean(self, val):
         return " ".join(val.split()) if val else ""
