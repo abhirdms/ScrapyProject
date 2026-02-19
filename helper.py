@@ -29,6 +29,7 @@ SCRAPERS = [
     # 'hough_gould',
     # 'howse_associates',
     # 'hummerstone_hawkins',
+    # 'hutchinson_morrison_childs',
     # 'h_r_h_retail',
     # 'j_h_walter',
     # 'j_r_b_t_commercial_property',
