@@ -11,9 +11,9 @@ from selenium.webdriver.support import expected_conditions as EC
 from lxml import html
 
 
-class PhilipMarshCollinsDeungScraper:
-    BASE_URL = "https://www.pmcd.co.uk/property-search/"
-    DOMAIN = "https://www.pmcd.co.uk"
+class SnellerScraper:
+    BASE_URL = "https://www.snellers.com/property-search"
+    DOMAIN = "https://www.snellers.com"
 
     def __init__(self):
         self.results = []
@@ -36,28 +36,13 @@ class PhilipMarshCollinsDeungScraper:
         page = 1
 
         while True:
-            self.driver.get(self.BASE_URL)
-
-            # Inject POST manually (WP expects post_type=pmcdproperty)
-            self.driver.execute_script("""
-                var form = document.createElement('form');
-                form.method = 'POST';
-                form.action = arguments[0];
-
-                var input = document.createElement('input');
-                input.type = 'hidden';
-                input.name = 'post_type';
-                input.value = 'pmcdproperty';
-
-                form.appendChild(input);
-                document.body.appendChild(form);
-                form.submit();
-            """, self.BASE_URL)
+            page_url = self.BASE_URL if page == 1 else f"{self.BASE_URL}?page={page}"
+            self.driver.get(page_url)
 
             try:
                 self.wait.until(EC.presence_of_element_located((
                     By.XPATH,
-                    "//article[contains(@class,'property')]"
+                    "//div[@class='box' and @itemprop='itemListElement']"
                 )))
             except Exception:
                 break
@@ -65,38 +50,41 @@ class PhilipMarshCollinsDeungScraper:
             tree = html.fromstring(self.driver.page_source)
 
             listing_urls = tree.xpath(
-                "//article[contains(@class,'property')]//h3/a/@href"
+                "//div[@class='box' and @itemprop='itemListElement']"
+                "//a[contains(@class,'readmore')]/@href"
             )
 
             if not listing_urls:
                 break
+
+            new_urls_found = False
 
             for href in listing_urls:
                 url = urljoin(self.DOMAIN, href)
 
                 if url in self.seen_urls:
                     continue
+
+                new_urls_found = True
                 self.seen_urls.add(url)
 
                 try:
                     obj = self.parse_listing(url)
                     if obj:
                         self.results.append(obj)
-                except Exception:
+                except Exception as e:
+                    print("ERROR:", e)
                     continue
 
-            # Pagination (if exists)
-            next_btn = tree.xpath(
-                "//a[contains(@class,'next')]/@href"
-            )
-
-            if not next_btn:
+            # 🔴 CRITICAL STOP CONDITION
+            if not new_urls_found:
                 break
 
             page += 1
 
         self.driver.quit()
         return self.results
+
 
     # ===================== LISTING ===================== #
 
@@ -105,75 +93,95 @@ class PhilipMarshCollinsDeungScraper:
 
         self.wait.until(EC.presence_of_element_located((
             By.XPATH,
-            "//h1[@class='entry-title']"
+            "//h1[@class='title']"
         )))
 
         tree = html.fromstring(self.driver.page_source)
 
         # ---------- DISPLAY ADDRESS ---------- #
-        display_address = self._clean(" ".join(
-            tree.xpath("//h1[@class='entry-title']/text()")
-        ))
+        display_address = self._clean(
+            tree.xpath("normalize-space(//h1[@class='title']/span)")
+        )
 
-        subtitle = self._clean(" ".join(
-            tree.xpath("//h2[@class='entry-subtitle']/text()")
-        ))
-
-        # ---------- DESCRIPTION ---------- #
-        detailed_description = self._clean(" ".join(
-            tree.xpath(
-                "//div[contains(@class,'entry-content')]//p"
-                "[not(ancestor::div[contains(@class,'brookly-hatom-data')])]//text()"
-            )
-        ))
-
-        # ---------- PROPERTY DETAILS ---------- #
-        property_details_text = self._clean(" ".join(
-            tree.xpath("//div[contains(@class,'property-details')]//p//text()")
-        ))
-
-        combined_text = detailed_description + " " + property_details_text
+        # ---------- HEADER (SIZE + PRICE) ---------- #
+        header_text = self._clean(
+            tree.xpath("normalize-space(//div[@id='property-search']//h2)")
+        )
 
         # ---------- SALE TYPE ---------- #
-        sale_type = self.normalize_sale_type(combined_text)
+        sale_type_raw = self._clean(
+            tree.xpath(
+                "normalize-space(//div[contains(@class,'image-gallery')]/span)"
+            )
+        )
+        sale_type = self.normalize_sale_type(sale_type_raw)
 
-        # ---------- SIZE ---------- #
-        size_ft, size_ac = self.extract_size(combined_text)
+        # ---------- PROPERTY SUB TYPE ---------- #
+        property_sub_type = self._clean(
+            tree.xpath(
+                "normalize-space(//div[contains(@class,'tab') and contains(@class,'desc')]/h2)"
+            )
+        )
 
-        # ---------- TENURE ---------- #
-        tenure = self.extract_tenure(combined_text)
+        # ---------- DESCRIPTION ---------- #
+        detailed_description = " ".join(
+            t.strip()
+            for t in tree.xpath("//div[@itemprop='description']//text()")
+            if t.strip()
+        )
+
+        # ---------- TENURE (FEATURE FIRST) ---------- #
+        feature_text = " ".join(
+            tree.xpath(
+                "//div[contains(@class,'tab') and contains(@class,'desc')]//ul/li/text()"
+            )
+        )
+
+        tenure = self.extract_tenure(feature_text)
+
+        if not tenure:
+            tenure = self.extract_tenure(detailed_description)
+
+        # ---------- SIZE (FROM HEADER) ---------- #
+        size_ft, size_ac = self.extract_size(header_text)
 
         # ---------- PRICE ---------- #
-        price = self.extract_numeric_price(combined_text, sale_type)
+        price = self.extract_numeric_price(header_text, sale_type)
 
         # ---------- IMAGES ---------- #
         property_images = [
-            urljoin(self.DOMAIN, src)
-            for src in tree.xpath(
-                "//div[@class='entry-thumbnail']//img/@src"
-            )
+            urljoin(self.DOMAIN, img)
+            for img in tree.xpath("//div[@id='gallery']//img/@data-large")
         ]
+
+        if not property_images:
+            style_attr = tree.xpath(
+                "string(//div[@id='BodyContent_ContentBody_mainImage']/@style)"
+            )
+            if style_attr:
+                m = re.search(r'url\((.*?)\)', style_attr)
+                if m:
+                    img_path = m.group(1).strip().strip("'").strip('"')
+                    property_images.append(urljoin(self.DOMAIN, img_path))
 
         # ---------- BROCHURE ---------- #
         brochure_urls = [
             urljoin(self.DOMAIN, href)
-            for href in tree.xpath(
-                "//div[contains(@class,'entry-brochure')]//a/@href"
-            )
+            for href in tree.xpath("//ul[@class='downloads']//a/@href")
         ]
 
         obj = {
             "listingUrl": url,
             "displayAddress": display_address,
             "price": price,
-            "propertySubType": property_details_text,
+            "propertySubType": property_sub_type,
             "propertyImage": property_images,
             "detailedDescription": detailed_description,
             "sizeFt": size_ft,
             "sizeAc": size_ac,
-            "postalCode": self.extract_postcode(subtitle),
+            "postalCode": self.extract_postcode(display_address),
             "brochureUrl": brochure_urls,
-            "agentCompanyName": "Philip Marsh Collins Deung",
+            "agentCompanyName": "Snellers",
             "agentName": "",
             "agentCity": "",
             "agentEmail": "",
@@ -183,11 +191,11 @@ class PhilipMarshCollinsDeungScraper:
             "tenure": tenure,
             "saleType": sale_type,
         }
-        print("*****"*10)
-        print(obj)
-        print("*****"*10)
+
+
 
         return obj
+
 
     # ===================== HELPERS ===================== #
 
@@ -202,8 +210,7 @@ class PhilipMarshCollinsDeungScraper:
         size_ac = ""
 
         m = re.search(
-            r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*'
-            r'(sq\.?\s*ft\.?|sqft|sf|square\s*feet)',
+            r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*(sq\.?\s*ft\.?|sqft|sf)',
             text
         )
         if m:
@@ -211,19 +218,8 @@ class PhilipMarshCollinsDeungScraper:
             b = float(m.group(2)) if m.group(2) else None
             size_ft = round(min(a, b), 3) if b else round(a, 3)
 
-        if not size_ft:
-            m = re.search(
-                r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*'
-                r'(sqm|m2|square\s*metres)',
-                text
-            )
-            if m:
-                sqm = float(m.group(1))
-                size_ft = round(sqm * 10.7639, 3)
-
         m = re.search(
-            r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*'
-            r'(acres?|acre|ac)',
+            r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*(acres?|acre|ac\.?)',
             text
         )
         if m:
@@ -243,12 +239,13 @@ class PhilipMarshCollinsDeungScraper:
         t = text.lower()
 
         if any(k in t for k in [
-            "poa", "price on application", "upon application"
+            "poa", "price on application", "upon application", "on application"
         ]):
             return ""
 
         if any(k in t for k in [
-            "per annum", "pa", "per month", "pcm", "rent"
+            "per annum", "pa", "per year", "pcm",
+            "per month", "pw", "per week", "rent", "psf"
         ]):
             return ""
 
@@ -263,6 +260,9 @@ class PhilipMarshCollinsDeungScraper:
         return str(int(num))
 
     def extract_tenure(self, text):
+        if not text:
+            return ""
+
         t = text.lower()
         if "freehold" in t:
             return "Freehold"
@@ -271,8 +271,12 @@ class PhilipMarshCollinsDeungScraper:
         return ""
 
     def extract_postcode(self, text):
+        if not text:
+            return ""
+
         FULL = r'\b[A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2}\b'
         PARTIAL = r'\b[A-Z]{1,2}\d{1,2}[A-Z]?\b'
+
         t = text.upper()
         m = re.search(FULL, t) or re.search(PARTIAL, t)
         return m.group() if m else ""
@@ -281,7 +285,7 @@ class PhilipMarshCollinsDeungScraper:
         t = text.lower()
         if "sale" in t:
             return "For Sale"
-        if "rent" in t or "to let" in t:
+        if "let" in t or "rent" in t:
             return "To Let"
         return ""
 
