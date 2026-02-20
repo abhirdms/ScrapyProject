@@ -71,5 +71,7 @@ SCRAPERS = [
     # 'philip_marsh_collins_deung',
     # 'p_s_k_knighton',
     # 'r_a_f_estates',
+    # 'advantage_investment',
+    'property_sourcers_4_u',
 ]
 
