@@ -48,7 +48,6 @@ class LisneyScraper:
 
             while True:
 
-                print(f"\nProcessing Base URL: {base_url} | Page: {page}")
 
                 page_url = base_url if page == 1 else f"{base_url}?paged={page}"
                 self.driver.get(page_url)
@@ -97,14 +96,12 @@ class LisneyScraper:
                         obj = self.parse_listing(url, display_address)
                         if obj:
                             self.results.append(obj)
-                            print(f"Total objects so far: {len(self.results)}")
                     except Exception as e:
                         print(f"Error parsing: {url} | {e}")
                         continue
 
                 # 🔴 STOP CONDITION
                 if not new_items_found:
-                    print("No new listings found on this page. Pagination finished.")
                     break
 
                 page += 1
