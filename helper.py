@@ -52,15 +52,15 @@ SCRAPERS = [
     # 'leopold_farmer',
     # 'levy_real_estate',
     # 'lexicon_c_r_e',
-    'lisney', 
+    # 'lisney', csv remaining
     # 'lofthouse_and_partners',
     # 'london_clancy',
     # 'phil_reid_associates',
     # 'philip_marsh_collins_deung',
     # 'p_k_3_agency',
     # 'potter_associates',
-    # 'advantage_investment'
-    # 'phil_reid_associates',
-    # 'philip_marsh_collins_deung',
+    # 'advantage_investment',
+        
+    
 ]
 

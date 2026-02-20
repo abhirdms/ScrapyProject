@@ -48,15 +48,18 @@ class LisneyScraper:
 
             while True:
 
+                print(f"\nProcessing Base URL: {base_url} | Page: {page}")
+
                 page_url = base_url if page == 1 else f"{base_url}?paged={page}"
                 self.driver.get(page_url)
 
                 try:
                     self.wait.until(EC.presence_of_element_located((
-                        By.XPATH,
-                        "//div[@id='property_listing_result']//div[contains(@class,'property_box')]"
+                        By.ID,
+                        "property_listing_result"
                     )))
                 except Exception:
+                    print("Listing container not found. Stopping.")
                     break
 
                 tree = html.fromstring(self.driver.page_source)
@@ -66,35 +69,43 @@ class LisneyScraper:
                 )
 
                 if not cards:
+                    print("No cards found. Breaking pagination.")
                     break
+
+                new_items_found = False
 
                 for card in cards:
 
                     display_address = self._clean(" ".join(
-                        card.xpath(
-                            ".//div[contains(@class,'property_title')]//a/text()"
-                        )
+                        card.xpath(".//div[contains(@class,'property_title')]//a/text()")
                     ))
 
-                    href = card.xpath(
-                        ".//a[contains(@class,'blankinfo_link')]/@href"
-                    )
-
+                    href = card.xpath(".//a[contains(@class,'blankinfo_link')]/@href")
                     if not href:
                         continue
 
                     url = urljoin(self.DOMAIN, href[0])
 
+                    # 🔴 KEY LOGIC
                     if url in self.seen_urls:
                         continue
+
+                    new_items_found = True
                     self.seen_urls.add(url)
 
                     try:
                         obj = self.parse_listing(url, display_address)
                         if obj:
                             self.results.append(obj)
-                    except Exception:
+                            print(f"Total objects so far: {len(self.results)}")
+                    except Exception as e:
+                        print(f"Error parsing: {url} | {e}")
                         continue
+
+                # 🔴 STOP CONDITION
+                if not new_items_found:
+                    print("No new listings found on this page. Pagination finished.")
+                    break
 
                 page += 1
 
@@ -280,10 +291,6 @@ class LisneyScraper:
             "tenure": tenure,
             "saleType": sale_type,
         }
-
-        print("*****"*10)
-        print(obj)
-        print("*****"*10)
 
         return obj
 

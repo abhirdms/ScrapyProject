@@ -111,9 +111,28 @@ class PhilipMarshCollinsDeungScraper:
         tree = html.fromstring(self.driver.page_source)
 
         # ---------- DISPLAY ADDRESS ---------- #
-        display_address = self._clean(" ".join(
-            tree.xpath("//h1[@class='entry-title']/text()")
+
+        # 1️⃣ Try hidden full address first
+        full_address = self._clean(" ".join(
+            tree.xpath(
+                "//div[contains(@class,'brookly-hatom-data')]"
+                "//span[@class='entry-title']/text()"
+            )
         ))
+
+        if full_address:
+            display_address = full_address
+        else:
+            # 2️⃣ Fallback to h1 + h2
+            title = self._clean(" ".join(
+                tree.xpath("//h1[@class='entry-title']/text()")
+            ))
+
+            subtitle = self._clean(" ".join(
+                tree.xpath("//h2[@class='entry-subtitle']/text()")
+            ))
+
+            display_address = self._clean(f"{title}, {subtitle}")
 
         subtitle = self._clean(" ".join(
             tree.xpath("//h2[@class='entry-subtitle']/text()")
@@ -133,6 +152,19 @@ class PhilipMarshCollinsDeungScraper:
         ))
 
         combined_text = detailed_description + " " + property_details_text
+
+        # ---------- PROPERTY TYPE ---------- #
+
+        property_sub_type = ""
+
+        m = re.search(
+            r'Type:\s*(.*?)\s*(?:Tenure:|$)',
+            property_details_text,
+            flags=re.IGNORECASE
+        )
+
+        if m:
+            property_sub_type = m.group(1).strip()
 
         # ---------- SALE TYPE ---------- #
         sale_type = self.normalize_sale_type(combined_text)
@@ -166,7 +198,7 @@ class PhilipMarshCollinsDeungScraper:
             "listingUrl": url,
             "displayAddress": display_address,
             "price": price,
-            "propertySubType": property_details_text,
+            "propertySubType": property_sub_type,
             "propertyImage": property_images,
             "detailedDescription": detailed_description,
             "sizeFt": size_ft,
@@ -183,9 +215,6 @@ class PhilipMarshCollinsDeungScraper:
             "tenure": tenure,
             "saleType": sale_type,
         }
-        print("*****"*10)
-        print(obj)
-        print("*****"*10)
 
         return obj
 
@@ -271,11 +300,16 @@ class PhilipMarshCollinsDeungScraper:
         return ""
 
     def extract_postcode(self, text):
+        if not text:
+            return ""
+
         FULL = r'\b[A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2}\b'
         PARTIAL = r'\b[A-Z]{1,2}\d{1,2}[A-Z]?\b'
+
         t = text.upper()
         m = re.search(FULL, t) or re.search(PARTIAL, t)
         return m.group() if m else ""
+
 
     def normalize_sale_type(self, text):
         t = text.lower()
