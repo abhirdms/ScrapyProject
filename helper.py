@@ -62,21 +62,12 @@ SCRAPERS = [
     # 'advantage_investment',
     # 'property_sourcers_4_u',
     # 'rand_surveyors',
+    'pudney_shuttleworth',
     # 'r_a_r_e',
     # 'rawstron_johnson',
     # 'reddin_clancy_co',
     # 'rees_denton',
-    # 'advantage_investment'
-    # 'phil_reid_associates',
-    # 'philip_marsh_collins_deung',
     # 'p_s_k_knighton',
-    # 'r_a_f_estates',
-    # 'advantage_investment',
-    # 'property_sourcers_4_u',
-    # 'rand_surveyors',
-    # 'r_a_r_e',
-    # 'rawstron_johnson',
-    # 'reddin_clancy_co',
-    # 'rees_denton',
+    # 'r_a_f_estates', csv remaining
 ]
 

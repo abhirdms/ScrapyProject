@@ -11,11 +11,29 @@ from selenium.webdriver.support import expected_conditions as EC
 from lxml import html
 
 
-class RafEstatesScraper:
+class RAFEstatesScraper:
 
     BASE_URLS = [
-        "https://rafestates.com/property?category_type=commercial&category_type_id=0&ownership_type=leasehold&price_range%5B0%5D=0&price_range%5B1%5D=0&area_range%5B0%5D=0&area_range%5B1%5D=0",
-        "https://rafestates.com/property?category_type=residential&category_type_id=0&ownership_type=lettings&price_range%5B0%5D=0&price_range%5B1%5D=0&bedroom_range%5B0%5D=0&bedroom_range%5B1%5D=0"
+        {
+            "url": "https://rafestates.com/property?category_type=residential&ownership_type=sale",
+            "sale_type": "For Sale",
+            "tenure": "",
+        },
+        {
+            "url": "https://rafestates.com/property?category_type=residential&ownership_type=lettings",
+            "sale_type": "To Let",
+            "tenure": "",
+        },
+        {
+            "url": "https://rafestates.com/property?category_type=commercial&ownership_type=freehold",
+            "sale_type": "For Sale",
+            "tenure": "Freehold",
+        },
+        {
+            "url": "https://rafestates.com/property?category_type=commercial&ownership_type=leasehold",
+            "sale_type": "To Let",
+            "tenure": "Leasehold",
+        },
     ]
 
     DOMAIN = "https://rafestates.com"
@@ -39,11 +57,14 @@ class RafEstatesScraper:
 
     def run(self):
 
-        for base in self.BASE_URLS:
+        for base_cfg in self.BASE_URLS:
+            base_url = base_cfg["url"]
+            base_sale_type = base_cfg["sale_type"]
+            base_tenure = base_cfg["tenure"]
             page = 1
 
             while True:
-                page_url = f"{base}&page={page}"
+                page_url = f"{base_url}&page={page}"
                 self.driver.get(page_url)
 
                 try:
@@ -71,7 +92,7 @@ class RafEstatesScraper:
                     self.seen_urls.add(url)
 
                     try:
-                        obj = self.parse_listing(url)
+                        obj = self.parse_listing(url, base_sale_type, base_tenure)
                         if obj:
                             self.results.append(obj)
                     except Exception:
@@ -85,7 +106,7 @@ class RafEstatesScraper:
 
     # ===================== LISTING ===================== #
 
-    def parse_listing(self, url):
+    def parse_listing(self, url, base_sale_type="", base_tenure=""):
 
         self.driver.get(url)
 
@@ -96,28 +117,51 @@ class RafEstatesScraper:
 
         tree = html.fromstring(self.driver.page_source)
 
-        # ---------- DISPLAY ADDRESS ---------- #
-        display_address = self._clean(" ".join(
-            tree.xpath("//div[@class='tc_content']/p/text()")
-        ))
-
-        # ---------- TITLE / SUB TYPE ---------- #
+        # ---------- TITLE / ADDRESS / PRICE (MAIN DETAIL BLOCK) ---------- #
         title_text = self._clean(" ".join(
-            tree.xpath("//div[@class='tc_content']/h4/text()")
+            tree.xpath(
+                "(//div[contains(@class,'listing_single_description2')]"
+                "//div[contains(@class,'single_property_title')]/h2/text())[1]"
+            )
         ))
 
+        display_address = self._clean(" ".join(
+            tree.xpath(
+                "(//div[contains(@class,'listing_single_description2')]"
+                "//div[contains(@class,'single_property_title')]/p/text())[1]"
+            )
+        ))
+
+        price_raw = self._clean(" ".join(
+            tree.xpath(
+                "(//div[contains(@class,'listing_single_description2')]"
+                "//div[contains(@class,'single_property_social_share')]"
+                "//div[contains(@class,'price')]/h2/text())[1]"
+            )
+        ))
+
+        # Fallback in case the main price node is missing
+        if not price_raw:
+            price_raw = self._clean(" ".join(
+                tree.xpath(
+                    "(//div[contains(@class,'additional_details')]"
+                    "//li[p[contains(.,'Price')]]"
+                    "/following-sibling::li[1]//span/text())[1]"
+                )
+            ))
+
+        # ---------- SUB TYPE ---------- #
         property_sub_type = ""
-        if "flat" in title_text.lower():
+        m = re.search(r"\(([^)]+)\)", title_text)
+        if m:
+            property_sub_type = m.group(1).strip().title()
+        elif "flat" in title_text.lower():
             property_sub_type = "Flat"
         elif "office" in title_text.lower():
             property_sub_type = "Office"
 
-        # ---------- PRICE ---------- #
-        price_raw = self._clean(" ".join(
-            tree.xpath("//div[contains(@class,'fp_price')]/text()")
-        ))
-
-        sale_type = self.normalize_sale_type(price_raw)
+        sale_type = base_sale_type or self.normalize_sale_type(price_raw)
+        price = self.extract_numeric_price(price_raw, sale_type)
 
         # ---------- DESCRIPTION ---------- #
         detailed_description = self._clean(" ".join(
@@ -140,7 +184,7 @@ class RafEstatesScraper:
         obj = {
             "listingUrl": url,
             "displayAddress": display_address,
-            "price": price_raw,
+            "price": price,
             "propertySubType": property_sub_type,
             "propertyImage": property_images,
             "detailedDescription": detailed_description,
@@ -155,7 +199,7 @@ class RafEstatesScraper:
             "agentPhone": "",
             "agentStreet": "",
             "agentPostcode": "",
-            "tenure": self.extract_tenure(detailed_description),
+            "tenure": base_tenure or self.extract_tenure(detailed_description),
             "saleType": sale_type,
         }
 
@@ -230,6 +274,37 @@ class RafEstatesScraper:
         if "rent" in t or "let" in t:
             return "To Let"
         return ""
+
+
+    def extract_numeric_price(self, text, sale_type):
+        if sale_type != "For Sale":
+            return ""
+
+        if not text:
+            return ""
+
+        t = text.lower()
+
+        if any(k in t for k in [
+            "poa", "price on application", "upon application", "on application"
+        ]):
+            return ""
+
+        if any(k in t for k in [
+            "per annum", "pa", "per year", "pcm",
+            "per month", "pw", "per week", "rent"
+        ]):
+            return ""
+
+        m = re.search(r'[£€]\s*(\d+(?:,\d{3})*(?:\.\d+)?)\s*m?', t)
+        if not m:
+            return ""
+
+        num = float(m.group(1).replace(",", ""))
+        if "m" in m.group(0):
+            num *= 1_000_000
+
+        return str(int(num))
 
 
     def _clean(self, val):
