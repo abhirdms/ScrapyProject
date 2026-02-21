@@ -72,8 +72,7 @@ class SnellerScraper:
                     obj = self.parse_listing(url)
                     if obj:
                         self.results.append(obj)
-                except Exception as e:
-                    print("ERROR:", e)
+                except Exception:
                     continue
 
             # 🔴 CRITICAL STOP CONDITION

@@ -37,7 +37,6 @@ class RAREScraper:
 
         while True:
             page_url = f"{self.BASE_URL}?page={page}"
-            print(f"Fetching: {page_url}")
 
             self.driver.get(page_url)
 
@@ -115,14 +114,14 @@ class RAREScraper:
         ))
 
         # ---------- TENURE ---------- #
-        tenure = self._clean(" ".join(
+        tenure_text = self._clean(" ".join(
             tree.xpath(
                 "//table[contains(@class,'property-details__table')]"
                 "//tr[td[1][contains(text(),'Tenure')]]/td[2]/text()"
             )
         ))
 
-        sale_type = self.normalize_sale_type(tenure)
+        sale_type = self.normalize_sale_type(tenure_text)
 
         # ---------- SIZE ---------- #
         size_text = self._clean(" ".join(
@@ -141,11 +140,13 @@ class RAREScraper:
 
         hidden_content = self._clean(" ".join(
             tree.xpath(
-                "//div[contains(@class,'property-details__hidden-content')]//text()"
+                "//div[contains(@class,'property-details__hidden-content')]"
+                "//*[not(ancestor::div[contains(@class,'relatedLinks')])]/text()"
             )
         ))
 
-        detailed_description = self._clean(f"{summary} {hidden_content}")
+        detailed_description = self.clean_description(f"{summary} {hidden_content}")
+        tenure = self.extract_tenure(f"{tenure_text} {detailed_description}")
 
         # ---------- PRICE ---------- #
         price_text = self._clean(" ".join(
@@ -182,7 +183,7 @@ class RAREScraper:
             "sizeAc": size_ac,
             "postalCode": self.extract_postcode(display_address),
             "brochureUrl": brochure_urls,
-            "agentCompanyName": "Rare Commercial Property",
+            "agentCompanyName": "RARE",
             "agentName": "",
             "agentCity": "",
             "agentEmail": "",
@@ -192,10 +193,6 @@ class RAREScraper:
             "tenure": tenure,
             "saleType": sale_type,
         }
-
-        print("**********")
-        print(obj)
-        print("**********")
 
         return obj
 
@@ -272,6 +269,25 @@ class RAREScraper:
         t = text.upper()
         m = re.search(FULL, t) or re.search(PARTIAL, t)
         return m.group() if m else ""
+
+    def extract_tenure(self, text):
+        if not text:
+            return ""
+
+        t = text.lower()
+        if "freehold" in t:
+            return "Freehold"
+        if "leasehold" in t:
+            return "Leasehold"
+        return ""
+
+    def clean_description(self, text):
+        if not text:
+            return ""
+
+        cleaned = re.split(r"\brelated links?\b", text, flags=re.IGNORECASE)[0]
+        cleaned = re.split(r"\bvisit marketing website\b", cleaned, flags=re.IGNORECASE)[0]
+        return self._clean(cleaned)
 
     def normalize_sale_type(self, text):
         t = text.lower()

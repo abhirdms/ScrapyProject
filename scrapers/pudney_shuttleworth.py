@@ -127,9 +127,7 @@ class PudneyShuttleworthScraper:
                 "saleType": "",
             }
 
-            print("*****" * 10)
-            print(obj)
-            print("*****" * 10)
+
             output.append(obj)
 
         return output

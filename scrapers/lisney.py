@@ -58,7 +58,6 @@ class LisneyScraper:
                         "property_listing_result"
                     )))
                 except Exception:
-                    print("Listing container not found. Stopping.")
                     break
 
                 tree = html.fromstring(self.driver.page_source)
@@ -68,7 +67,6 @@ class LisneyScraper:
                 )
 
                 if not cards:
-                    print("No cards found. Breaking pagination.")
                     break
 
                 new_items_found = False
