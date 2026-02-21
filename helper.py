@@ -70,5 +70,6 @@ SCRAPERS = [
     # 'p_s_k_knighton',
     # 'r_a_f_estates', csv remaining
     # 'reid_rose_gregory', csv remaining
+    # 'ridley_thaw',
 ]
 
