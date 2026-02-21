@@ -1,4 +1,6 @@
 import re
+import time
+import hashlib
 from urllib.parse import urljoin
 
 from selenium import webdriver
@@ -11,7 +13,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from lxml import html
 
 
-class ReddinClancyScraper:
+class ReddinClancyCoScraper:
     BASE_URL = "https://www.reddin-clancy.co.uk/our-property/"
     DOMAIN = "https://www.reddin-clancy.co.uk"
 
@@ -40,22 +42,12 @@ class ReddinClancyScraper:
             "//div[@class='search-results-row']"
         )))
 
-        tree = html.fromstring(self.driver.page_source)
+        self._load_all_listing_cards()
+        cards = self.driver.find_elements(By.CSS_SELECTOR, "div.search-results-row")
 
-        listing_urls = tree.xpath(
-            "//div[@class='search-results-row']"
-            "//a[contains(@href,'propertydetails')]/@href"
-        )
-
-        for href in listing_urls:
-            url = urljoin(self.DOMAIN, href)
-
-            if url in self.seen_urls:
-                continue
-            self.seen_urls.add(url)
-
+        for card in cards:
             try:
-                obj = self.parse_listing(url)
+                obj = self.parse_listing_card(card)
                 if obj:
                     self.results.append(obj)
             except Exception:
@@ -64,122 +56,140 @@ class ReddinClancyScraper:
         self.driver.quit()
         return self.results
 
-    # ===================== LISTING ===================== #
+    def parse_listing_card(self, card):
+        card_html = card.get_attribute("outerHTML") or ""
+        if not card_html:
+            return None
+        card = html.fromstring(card_html)
 
-    def parse_listing(self, url):
-        self.driver.get(url)
-
-        self.wait.until(EC.presence_of_element_located((
-            By.XPATH,
-            "//div[contains(@class,'property-details-summary')]"
-        )))
-
-        tree = html.fromstring(self.driver.page_source)
-
-        # ---------- TITLE ---------- #
-        title = self._clean(" ".join(
-            tree.xpath("//div[contains(@class,'property-features')]/h2/text()")
-        ))
-
-        # ---------- DISPLAY ADDRESS ---------- #
-        display_address = self._clean(" ".join(
-            tree.xpath("//div[contains(@class,'property-features')]/p/text()")
-        ))
-
-        # ---------- SALE TYPE ---------- #
-        sale_type_raw = self._clean(" ".join(
-            tree.xpath(
-                "//table[contains(@class,'guideprices')]"
-                "//td[normalize-space()='To Let']/text()"
+        sale_status = self._clean(" ".join(
+            card.xpath(
+                ".//li[contains(.,'Sale Status')]/span/text()"
+                " | .//span[contains(@class,'features-mark-status')]/text()"
             )
-        )) or self._clean(" ".join(
-            tree.xpath(
-                "//table[contains(@class,'guideprices')]//td[2]/text()"
-            )
-        ))
+        )).lower()
+        if "sold" in sale_status:
+            return None
 
+        features = self._extract_features_map(card)
+
+        href = self._clean(" ".join(card.xpath("./@data-href")))
+        if not href:
+            href = self._clean(" ".join(
+                card.xpath(".//a[contains(@href,'propertydetails')][1]/@href")
+            ))
+        title = self._first_text(card, [
+            ".//div[contains(@class,'property-features')][1]//h2/text()",
+            ".//h2/text()",
+        ])
+        subtitle = self._first_text(card, [
+            ".//div[contains(@class,'property-features')][1]//h3/text()",
+            ".//h3/text()",
+        ])
+        display_address = subtitle or title
+
+        property_sub_type = features.get("property type", "")
+        sale_type_raw = features.get("sale type", "")
         sale_type = self.normalize_sale_type(sale_type_raw)
 
-        # ---------- PROPERTY TYPE ---------- #
-        property_sub_type = self._clean(" ".join(
-            tree.xpath(
-                "//li[contains(.,'Property type')]/span/text()"
-            )
+        quote_price_text = features.get("quote price", "")
+        price = self.extract_numeric_price(quote_price_text, sale_type)
+
+        href = re.sub(r"propertydetails/propertydetails", "propertydetails", href)
+        if href:
+            listing_url = urljoin(self.DOMAIN, href)
+        else:
+            fallback_key = "|".join([display_address, property_sub_type, quote_price_text, sale_type])
+            digest = hashlib.md5(fallback_key.encode("utf-8")).hexdigest()[:12]
+            listing_url = f"{self.BASE_URL}#listing-{digest}"
+
+        if listing_url in self.seen_urls:
+            return None
+        self.seen_urls.add(listing_url)
+
+        size_text = self._clean(" ".join(
+            card.xpath(".//span[contains(@class,'search-property-size')]/text()")
         ))
+        size_ft, size_ac = self.extract_size(size_text)
 
-        # ---------- DESCRIPTION ---------- #
-        detailed_description = self._clean(" ".join(
-            tree.xpath(
-                "//div[@class='property-details-descriptions']//p//text()"
-            )
+        image_style = self._clean(" ".join(
+            card.xpath(".//div[contains(@class,'search-results-row-thumb')]//a[1]/@style")
         ))
-
-        # ---------- SIZE ---------- #
-        size_ft, size_ac = self.extract_size(detailed_description)
-
-        # ---------- TENURE ---------- #
-        tenure = self.extract_tenure(detailed_description)
-
-        # ---------- PRICE ---------- #
-        price = self.extract_numeric_price(detailed_description, sale_type)
-
-        # ---------- IMAGES (LARGE ONLY) ---------- #
-        property_images = list(set(
-            tree.xpath(
-                "//div[@id='galleryViewer']//img/@src"
-            )
-        ))
-
-        # ---------- BROCHURE ---------- #
-        brochure_urls = [
-            urljoin(self.DOMAIN, href)
-            for href in tree.xpath(
-                "//div[contains(@class,'property-downloads')]//a/@href"
-            )
-        ]
-
-        # ---------- AGENT (FIRST ONLY) ---------- #
-        agent_name = self._clean(" ".join(
-            tree.xpath("(//div[@class='enquire-agent'])[1]"
-                       "//ul[@class='enquire-agent-details']/li[1]/text()")
-        ))
-
-        agent_phone = self._clean(" ".join(
-            tree.xpath("(//div[@class='enquire-agent'])[1]"
-                       "//a[contains(@class,'tel')]/text()")
-        ))
-
-        agent_email = self._clean(" ".join(
-            tree.xpath("(//div[@class='enquire-agent'])[1]"
-                       "//span[@id='enquire-agent-details-email']/text()")
-        ))
+        property_images = []
+        if image_style:
+            m = re.search(r"url\(['\"]?([^'\")]+)", image_style)
+            if m:
+                property_images = [urljoin(self.DOMAIN, m.group(1))]
 
         obj = {
-            "listingUrl": url,
+            "listingUrl": listing_url,
             "displayAddress": display_address,
             "price": price,
             "propertySubType": property_sub_type,
             "propertyImage": property_images,
-            "detailedDescription": detailed_description,
+            "detailedDescription": "",
             "sizeFt": size_ft,
             "sizeAc": size_ac,
             "postalCode": self.extract_postcode(display_address),
-            "brochureUrl": brochure_urls,
+            "brochureUrl": [],
             "agentCompanyName": "Reddin-Clancy & Co",
-            "agentName": agent_name,
+            "agentName": "",
             "agentCity": "",
-            "agentEmail": agent_email,
-            "agentPhone": agent_phone,
+            "agentEmail": "",
+            "agentPhone": "",
             "agentStreet": "",
             "agentPostcode": "",
-            "tenure": tenure,
+            "tenure": self.extract_tenure(quote_price_text),
             "saleType": sale_type,
-        }
-
+        } 
 
         return obj
 
+    def _load_all_listing_cards(self, max_scrolls=30):
+        last_count = 0
+        stagnant_rounds = 0
+
+        for _ in range(max_scrolls):
+            cards = self.driver.find_elements(By.XPATH, "//div[contains(@class,'search-results-row')]")
+            current_count = len(cards)
+
+            if current_count > last_count:
+                last_count = current_count
+                stagnant_rounds = 0
+            else:
+                stagnant_rounds += 1
+
+            if stagnant_rounds >= 3:
+                break
+
+            self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(1.2)
+            self.driver.execute_script("window.scrollBy(0, -400);")
+            time.sleep(0.6)
+            self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(1.2)
+
     # ===================== HELPERS ===================== #
+
+    def _first_text(self, node, xpaths):
+        for xp in xpaths:
+            val = self._clean(" ".join(node.xpath(xp)))
+            if val:
+                return val
+        return ""
+
+    def _extract_features_map(self, card):
+        out = {}
+        items = card.xpath(".//div[contains(@class,'property-features')][1]//li")
+        for li in items:
+            raw = self._clean(" ".join(li.xpath(".//text()")))
+            if ":" not in raw:
+                continue
+            key, tail = raw.split(":", 1)
+            key = key.strip().lower()
+            value = self._clean(" ".join(li.xpath("./span//text()"))) or self._clean(tail)
+            out[key] = value
+        return out
 
     def extract_size(self, text):
         if not text:
@@ -259,6 +269,8 @@ class ReddinClancyScraper:
 
     def normalize_sale_type(self, text):
         t = text.lower()
+        if "sold" in t:
+            return ""
         if "sale" in t:
             return "For Sale"
         if "let" in t or "rent" in t:
