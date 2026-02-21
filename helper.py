@@ -60,6 +60,11 @@ SCRAPERS = [
     # 'p_k_3_agency',
     # 'potter_associates',
     # 'advantage_investment',
-    'property_sourcers_4_u',
+    # 'property_sourcers_4_u',
+    # 'rand_surveyors',
+    # 'r_a_r_e',
+    # 'rawstron_johnson',
+    # 'reddin_clancy_co',
+    # 'rees_denton',
 ]
 
