@@ -46,7 +46,9 @@ class RawstronJohnsonScraper:
 
         tree = html.fromstring(self.driver.page_source)
 
-        items = tree.xpath("//div[contains(@class,'jet-listing-grid__item')]")
+        items = tree.xpath(
+            "//div[contains(@class,'jet-listing-grid__item') and @data-post-id]"
+        )
 
         for item in items:
 
@@ -54,10 +56,7 @@ class RawstronJohnsonScraper:
                 item.xpath(".//h3[contains(@class,'elementor-heading-title')]/text()")
             ))
 
-            brochure_urls = [
-                urljoin(self.DOMAIN, href)
-                for href in item.xpath(".//a[contains(@href,'.pdf')]/@href")
-            ]
+            brochure_urls = self._extract_brochure_urls(item)
 
             if not brochure_urls:
                 continue
@@ -85,7 +84,7 @@ class RawstronJohnsonScraper:
 
     def parse_listing(self, url, display_address, brochure_urls):
 
-        sale_type = "To Let"
+        sale_type = ""
 
         detailed_description = ""
         property_sub_type = ""
@@ -112,7 +111,7 @@ class RawstronJohnsonScraper:
             "agentCompanyName": "Rawstron Johnson",
             "agentName": "",
             "agentCity": "",
-            "agentEmail": "info@rj-ltd.co.uk",
+            "agentEmail": "",
             "agentPhone": "",
             "agentStreet": "",
             "agentPostcode": "",
@@ -121,10 +120,25 @@ class RawstronJohnsonScraper:
         }
 
 
-
         return obj
 
     # ===================== HELPERS ===================== #
+
+    def _extract_brochure_urls(self, item):
+        hrefs = item.xpath(
+            ".//a[not(starts-with(@href,'mailto:'))]/@href"
+        )
+
+        brochure_urls = []
+        for href in hrefs:
+            if ".pdf" not in href.lower():
+                continue
+
+            full_url = urljoin(self.DOMAIN, href)
+            if full_url not in brochure_urls:
+                brochure_urls.append(full_url)
+
+        return brochure_urls
 
     def extract_postcode(self, text):
         if not text:
