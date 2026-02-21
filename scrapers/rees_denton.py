@@ -104,6 +104,18 @@ class ReesDentonScraper:
             tree.xpath("//td[normalize-space()='Tenure']/following-sibling::td//text()")
         ))
 
+        # ---------- CONTACT ---------- #
+        contact_href = self._clean(" ".join(
+            tree.xpath("//table[contains(@class,'mainproperty')]//a[starts-with(@href,'mailto:')]/@href")
+        ))
+        agent_email = self.extract_email(contact_href)
+        agent_name = self._clean(" ".join(
+            tree.xpath("//table[contains(@class,'mainproperty')]//a[starts-with(@href,'mailto:')]//text()")
+        ))
+        agent_phone = self._clean(" ".join(
+            tree.xpath("//table[contains(@class,'mainproperty')]//span[contains(@class,'label')]//text()")
+        ))
+
         # ---------- SIZE ---------- #
         size_text = " ".join(
             tree.xpath("//table[contains(@class,'table-striped')]//td//text()")
@@ -112,16 +124,26 @@ class ReesDentonScraper:
 
         # ---------- PRICE / RENT ---------- #
         price_text = self._clean(" ".join(
-            tree.xpath("//td[contains(.,'Rent')]/following-sibling::td//text()")
+            tree.xpath(
+                "//table[contains(@class,'table-striped')]"
+                "//tr[td[1][contains(translate(normalize-space(.),"
+                "'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'rent')"
+                " or contains(translate(normalize-space(.),"
+                "'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'price')]]"
+                "/td[last()]//text()"
+            )
         ))
-
-        sale_type = self.normalize_sale_type(price_text)
-        price = self.extract_numeric_price(price_text, sale_type)
 
         # ---------- DESCRIPTION ---------- #
         detailed_description = self._clean(" ".join(
-            tree.xpath("//strong[normalize-space()='Notes']/following-sibling::text()")
+            tree.xpath(
+                "//table[contains(@class,'table-striped')]"
+                "//tr[td/strong[normalize-space()='Notes']]//td//text()"
+            )
         ))
+
+        sale_type = self.normalize_sale_type(price_text, tenure, detailed_description)
+        price = self.extract_numeric_price(price_text, sale_type)
 
         # ---------- IMAGES ---------- #
         property_images = [
@@ -135,10 +157,14 @@ class ReesDentonScraper:
         js_links = tree.xpath("//a[contains(@href,'downloadDetailsSheet')]/@href")
 
         for link in js_links:
-            m = re.search(r"'([^']+\.pdf)'", link)
+            m = re.search(
+                r"downloadDetailsSheet\('([^']+)'\s*,\s*'[^']+'\s*,\s*'([^']+\.pdf)'",
+                link,
+                re.IGNORECASE
+            )
             if m:
                 brochure_urls.append(
-                    urljoin(self.DOMAIN, f"/rd/property.nsf/{m.group(1)}")
+                    urljoin(self.DOMAIN, f"/rd/property.nsf/{m.group(1)}/$File/{m.group(2)}")
                 )
 
         obj = {
@@ -153,15 +179,19 @@ class ReesDentonScraper:
             "postalCode": self.extract_postcode(display_address),
             "brochureUrl": brochure_urls,
             "agentCompanyName": "Rees Denton",
-            "agentName": "",
+            "agentName": agent_name,
             "agentCity": "",
-            "agentEmail": "",
-            "agentPhone": "",
+            "agentEmail": agent_email,
+            "agentPhone": agent_phone,
             "agentStreet": "",
             "agentPostcode": "",
             "tenure": tenure,
             "saleType": sale_type,
         }
+
+        print("*****"*10)
+        print(obj)
+        print("*****"*10)
 
 
 
@@ -176,6 +206,8 @@ class ReesDentonScraper:
         text = text.lower().replace(",", "")
         text = text.replace("ft²", "sq ft")
         text = text.replace("m²", "sqm")
+        text = re.sub(r"\bft\s*2\b", "sq ft", text)
+        text = re.sub(r"\bm\s*2\b", "sqm", text)
         text = re.sub(r"[–—−]", "-", text)
 
         size_ft = ""
@@ -220,7 +252,8 @@ class ReesDentonScraper:
         if not m:
             return ""
 
-        return str(int(float(m.group(1).replace(",", ""))))
+        amount = int(float(m.group(1).replace(",", "")))
+        return str(amount) if amount > 0 else ""
 
     def extract_postcode(self, text):
         if not text:
@@ -233,11 +266,25 @@ class ReesDentonScraper:
         m = re.search(FULL, t) or re.search(PARTIAL, t)
         return m.group() if m else ""
 
-    def normalize_sale_type(self, text):
-        t = text.lower()
-        if "rent" in t or "pax" in t:
+    def extract_email(self, text):
+        if not text:
+            return ""
+        m = re.search(r"mailto:([^?'\"]+@[^?'\"]+)", text, re.IGNORECASE)
+        return m.group(1).strip() if m else ""
+
+    def normalize_sale_type(self, price_text, tenure_text="", description_text=""):
+        t_price = (price_text or "").lower()
+        t_tenure = (tenure_text or "").lower()
+        t_desc = (description_text or "").lower()
+        merged = f"{t_price} {t_tenure} {t_desc}"
+
+        if "for sale" in t_tenure or "for sale" in merged or "offers are invited" in merged:
+            return "For Sale"
+        if "to let" in merged:
             return "To Let"
-        if "£" in t:
+        if any(k in t_price for k in ["rent", "pax", "per annum", " p.a", "pcm", "pw", "lease"]):
+            return "To Let"
+        if "£" in t_price:
             return "For Sale"
         return ""
 
