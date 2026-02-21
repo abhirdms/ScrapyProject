@@ -58,35 +58,44 @@ class RandSurveyorsScraper:
     # ===================== LISTING ===================== #
 
     def parse_listing(self, item):
+        # Wix listing cards expose detail chunks through richText blocks in a stable order.
+        text_chunks = [
+            self._clean(" ".join(node.xpath(".//text()")))
+            for node in item.xpath(".//div[@data-testid='richTextElement']")
+        ]
+        text_chunks = [chunk for chunk in text_chunks if chunk]
 
-        # ---------- TITLE ---------- #
-        property_sub_type = self._clean(" ".join(
-            item.xpath(".//h2//text()")
-        ))
+        property_sub_type = text_chunks[0] if len(text_chunks) > 0 else ""
+        size_text = text_chunks[1] if len(text_chunks) > 1 else ""
+        display_address = text_chunks[2] if len(text_chunks) > 2 else ""
+        price_text = text_chunks[3] if len(text_chunks) > 3 else ""
 
-        # ---------- SIZE ---------- #
-        size_text = self._clean(" ".join(
-            item.xpath(".//p[.//span[contains(text(),'sq')]]//text()")
-        ))
-
-        # ---------- ADDRESS ---------- #
-        display_address = self._clean(" ".join(
-            item.xpath(".//p[contains(text(),'United Kingdom') or contains(text(),'UK')]//text()")
-        ))
-
-        # ---------- PRICE ---------- #
-        price_text = self._clean(" ".join(
-            item.xpath(".//p[contains(text(),'£')]//text()")
-        ))
+        # Fallbacks in case the card ordering changes.
+        if not property_sub_type:
+            property_sub_type = self._clean(" ".join(item.xpath(".//h2//text()")))
+        if not size_text:
+            size_text = self._clean(" ".join(
+                item.xpath(".//*[contains(translate(normalize-space(string(.)),'SQFTACRE ','sqftacre '),'sq ft')]/text()")
+            ))
+        if not display_address:
+            display_address = self._clean(" ".join(
+                item.xpath(".//p[contains(text(),'United Kingdom') or contains(text(),'UK')]//text()")
+            ))
+        if not price_text:
+            price_text = self._clean(" ".join(item.xpath(".//*[contains(text(),'£')]//text()")))
 
         # ---------- IMAGE ---------- #
-        property_images = item.xpath(".//img/@src")
+        property_images = [
+            src for src in item.xpath(".//img/@src")
+            if src and src.strip()
+        ]
 
         # ---------- BROCHURE (USED AS LISTING URL) ---------- #
-        brochure_urls = [
-            urljoin(self.DOMAIN, href)
-            for href in item.xpath(".//a[contains(@href,'.pdf')]/@href")
-        ]
+        brochure_urls = []
+        for href in item.xpath(".//a[contains(@href,'.pdf') or contains(translate(@aria-label, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'),'brochure')]/@href"):
+            full = urljoin(self.DOMAIN, href)
+            if full not in brochure_urls:
+                brochure_urls.append(full)
 
         listing_url = brochure_urls[0] if brochure_urls else ""
 
@@ -134,9 +143,6 @@ class RandSurveyorsScraper:
             "saleType": sale_type,
         }
 
-        print("*****" * 10)
-        print(obj)
-        print("*****" * 10)
 
         return obj
 
@@ -216,7 +222,7 @@ class RandSurveyorsScraper:
         t = text.lower()
         if "sale" in t:
             return "For Sale"
-        if "rent" in t or "pa" in t:
+        if "rent" in t:
             return "To Let"
         return ""
 

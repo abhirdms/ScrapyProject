@@ -1,4 +1,5 @@
 import re
+import time
 from urllib.parse import urljoin, urlparse
 
 from selenium import webdriver
@@ -55,9 +56,9 @@ class PudneyShuttleworthScraper:
 
             for item in items:
                 try:
-                    obj = self.parse_listing(item, url)
-                    if obj:
-                        self.results.append(obj)
+                    objs = self.parse_listing(item, url)
+                    if objs:
+                        self.results.extend(objs)
                 except Exception:
                     continue
 
@@ -67,21 +68,7 @@ class PudneyShuttleworthScraper:
     # ===================== LISTING ===================== #
 
     def parse_listing(self, item, source_url):
-        p_values = []
-        for p in item.xpath(".//div[@data-testid='richTextElement']//p"):
-            txt = self._clean(" ".join(p.xpath(".//text()")))
-            if txt:
-                p_values.append(txt)
-
-        size_text = ""
-        for v in p_values:
-            if self._looks_like_size(v):
-                size_text = v
-                break
-
-        non_size = [v for v in p_values if v != size_text]
-        scheme = non_size[0] if non_size else ""
-        location = non_size[1] if len(non_size) > 1 else ""
+        chunks = self._text_chunks(item)
 
         brochure_urls = [
             urljoin(self.DOMAIN, href)
@@ -89,65 +76,194 @@ class PudneyShuttleworthScraper:
         ]
         listing_url = brochure_urls[0] if brochure_urls else source_url
 
-        unique_key = "|".join([listing_url, scheme, location, size_text])
-        if unique_key in self.seen_keys:
-            return None
-        self.seen_keys.add(unique_key)
+        records = self._records_from_labelled_chunks(chunks)
+        if not records:
+            records = [self._record_from_simple_chunks(chunks)]
 
-        size_ft, size_ac = self.extract_size(size_text)
         category = self.url_to_category(source_url)
-        detailed_description = self._clean(
-            f"Category: {category}. Scheme: {scheme}. Location: {location}. Size: {size_text}."
-        )
+        output = []
 
-        obj = {
-            "listingUrl": listing_url,
-            "displayAddress": location,
-            "price": "",
-            "propertySubType": scheme,
-            "propertyImage": [],
-            "detailedDescription": detailed_description,
-            "sizeFt": size_ft,
-            "sizeAc": size_ac,
-            "postalCode": self.extract_postcode(location),
-            "brochureUrl": brochure_urls,
-            "agentCompanyName": self.AGENT_COMPANY,
-            "agentName": "",
-            "agentCity": "",
-            "agentEmail": "",
-            "agentPhone": "",
-            "agentStreet": "",
-            "agentPostcode": "",
-            "tenure": "",
-            "saleType": "",
-        }
+        for idx, rec in enumerate(records):
+            size_text = rec.get("size_text", "")
+            scheme = rec.get("scheme", "")
+            location = rec.get("location", "")
+            address = rec.get("address", "")
+            listing_url_for_row = brochure_urls[idx] if idx < len(brochure_urls) else listing_url
+            brochure_for_row = [listing_url_for_row] if listing_url_for_row else brochure_urls
 
-        print("*****" * 10)
-        print(obj)
-        print("*****" * 10)
+            display_address = address or location
+            property_sub_type = scheme or address or location
+            size_ft, size_ac = self.extract_size(size_text)
 
-        return obj
+            detailed_description = self._clean(
+                f"Category: {category}. Scheme: {scheme}. "
+                f"Location: {location}. Address: {address}. Size: {size_text}."
+            )
+
+            unique_key = "|".join([listing_url_for_row, property_sub_type, display_address, size_text])
+            if unique_key in self.seen_keys:
+                continue
+            self.seen_keys.add(unique_key)
+
+            obj = {
+                "listingUrl": listing_url_for_row,
+                "displayAddress": display_address,
+                "price": "",
+                "propertySubType": property_sub_type,
+                "propertyImage": [],
+                "detailedDescription": detailed_description,
+                "sizeFt": size_ft,
+                "sizeAc": size_ac,
+                "postalCode": self.extract_postcode(display_address),
+                "brochureUrl": brochure_for_row,
+                "agentCompanyName": self.AGENT_COMPANY,
+                "agentName": "",
+                "agentCity": "",
+                "agentEmail": "",
+                "agentPhone": "",
+                "agentStreet": "",
+                "agentPostcode": "",
+                "tenure": "",
+                "saleType": "",
+            }
+
+            print("*****" * 10)
+            print(obj)
+            print("*****" * 10)
+            output.append(obj)
+
+        return output
 
     # ===================== HELPERS ===================== #
 
-    def _expand_view_more(self):
-        while True:
-            try:
-                cards_before = len(self.driver.find_elements(By.XPATH, "//div[@role='listitem']"))
-                btn = WebDriverWait(self.driver, 2).until(
-                    EC.element_to_be_clickable((
-                        By.XPATH,
-                        "//button[normalize-space()='View More' or .//span[normalize-space()='View More']]"
-                    ))
-                )
-                self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
-                self.driver.execute_script("arguments[0].click();", btn)
+    def _text_chunks(self, item):
+        chunks = []
+        for d in item.xpath(".//div[@data-testid='richTextElement']"):
+            txt = self._clean(" ".join(d.xpath(".//text()")))
+            if txt:
+                chunks.append(txt)
+        return chunks
 
-                WebDriverWait(self.driver, 6).until(
-                    lambda d: len(d.find_elements(By.XPATH, "//div[@role='listitem']")) > cards_before
-                )
-            except Exception:
+    def _is_label(self, text):
+        t = self._clean(text).lower().strip(":")
+        return t in {"location", "address", "scheme", "size"}
+
+    def _records_from_labelled_chunks(self, chunks):
+        records = []
+        current = {}
+        i = 0
+        n = len(chunks)
+
+        while i < n:
+            label = self._clean(chunks[i]).lower().strip(":")
+            if label in {"location", "address", "scheme", "size"}:
+                j = i + 1
+                while j < n and self._is_label(chunks[j]):
+                    j += 1
+                value = chunks[j] if j < n else ""
+
+                if value and not self._is_label(value):
+                    if label == "location":
+                        if current.get("location") or current.get("address") or current.get("size_text"):
+                            records.append(current)
+                            current = {}
+                        current["location"] = value
+                    elif label == "address":
+                        current["address"] = value
+                    elif label == "scheme":
+                        current["scheme"] = value
+                    elif label == "size":
+                        current["size_text"] = value
+                i = j + 1
+                continue
+            i += 1
+
+        if current.get("location") or current.get("address") or current.get("size_text") or current.get("scheme"):
+            records.append(current)
+
+        return records
+
+    def _record_from_simple_chunks(self, chunks):
+        size_text = ""
+        for c in chunks:
+            if self._looks_like_size(c):
+                size_text = c
                 break
+
+        values = [c for c in chunks if not self._is_label(c) and not self._looks_like_size(c)]
+        scheme = values[0] if values else ""
+        location = values[1] if len(values) > 1 else ""
+
+        return {
+            "scheme": scheme,
+            "location": location,
+            "address": "",
+            "size_text": size_text,
+        }
+
+    def _expand_view_more(self):
+        stagnation = 0
+
+        while True:
+            cards_before = len(self.driver.find_elements(By.XPATH, "//div[@role='listitem']"))
+            btn = self._get_view_more_button()
+            if not btn:
+                break
+
+            clicked = False
+            try:
+                self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
+                time.sleep(0.4)
+                btn.click()
+                clicked = True
+            except Exception:
+                try:
+                    self.driver.execute_script("arguments[0].click();", btn)
+                    clicked = True
+                except Exception:
+                    pass
+
+            if not clicked:
+                stagnation += 1
+                if stagnation >= 2:
+                    break
+                continue
+
+            loaded = False
+            end_time = time.time() + 15
+            while time.time() < end_time:
+                time.sleep(0.6)
+                cards_now = len(self.driver.find_elements(By.XPATH, "//div[@role='listitem']"))
+                if cards_now > cards_before:
+                    loaded = True
+                    break
+
+                # If button disappeared, we've reached the final page.
+                if not self._get_view_more_button():
+                    loaded = True
+                    break
+
+            if loaded:
+                stagnation = 0
+                continue
+
+            stagnation += 1
+            if stagnation >= 2:
+                break
+
+    def _get_view_more_button(self):
+        buttons = self.driver.find_elements(
+            By.XPATH,
+            "//button[normalize-space()='View More' or .//span[normalize-space()='View More']]"
+        )
+        for btn in buttons:
+            try:
+                if btn.is_displayed() and btn.is_enabled():
+                    return btn
+            except Exception:
+                continue
+        return None
 
     def _looks_like_size(self, text):
         t = text.lower()
