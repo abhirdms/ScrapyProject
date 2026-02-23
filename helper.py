@@ -75,6 +75,7 @@ SCRAPERS = [
     # 'roger_etchells_co',
     # 'roger_hannah',
     # 'commercial_property_partners',
-    'cordage_group',
+    # 'cordage_group',
+    'cortex_partners',
 ]
 
