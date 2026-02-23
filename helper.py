@@ -76,6 +76,10 @@ SCRAPERS = [
     # 'roger_hannah',
     # 'commercial_property_partners',
     # 'cordage_group',
-    'cortex_partners',
+    # 'cortex_partners',
+    
+    # 'cradick_retail',
+    # 'crossland_otter_hunt'.
+    'crow_watkin'
 ]
 
