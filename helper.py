@@ -80,6 +80,8 @@ SCRAPERS = [
     
     # 'cradick_retail',
     # 'crossland_otter_hunt'.
-    'crow_watkin'
+    # 'crow_watkin',
+    # 'curson_sowerby_partners', csv remaining
+    'cuthbert_white',
 ]
 
