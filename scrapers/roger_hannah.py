@@ -1,5 +1,6 @@
 import re
 import time
+from urllib.request import Request, urlopen
 from urllib.parse import urljoin
 
 from lxml import html
@@ -25,87 +26,108 @@ class RogerHannahScraper:
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--window-size=1920,1080")
+        chrome_options.add_experimental_option(
+            "prefs",
+            {"profile.managed_default_content_settings.images": 2},
+        )
+        chrome_options.page_load_strategy = "eager"
 
         service = Service("/usr/bin/chromedriver")
+        self._chrome_options = chrome_options
+        self._service = service
         self.driver = webdriver.Chrome(service=service, options=chrome_options)
         self.wait = WebDriverWait(self.driver, 20)
+        self.detail_driver = None
+        self.detail_wait = None
 
     def run(self):
-        self.driver.get(self.BASE_URL)
-
         try:
+            self.driver.get(self.BASE_URL)
+
             self.wait.until(EC.presence_of_element_located((
                 By.XPATH,
                 "//div[contains(@class,'property_card_ajax')]",
             )))
-        except Exception:
-            self.driver.quit()
+
+            processed_count = 0
+            listing_rows = []
+            max_cards = self._get_expected_card_count()
+
+            while True:
+                current_count = len(self.driver.find_elements(By.XPATH, "//div[contains(@class,'property_card_ajax')]"))
+                tree = html.fromstring(self.driver.page_source)
+                cards = tree.xpath("//div[contains(@class,'property_card_ajax')]")
+
+                for card in cards[processed_count:current_count]:
+                    href = self._clean(" ".join(card.xpath(".//h5/a/@href")))
+                    if not href:
+                        continue
+
+                    listing_url = self.normalize_url(href)
+                    if listing_url in self.seen_urls:
+                        continue
+                    self.seen_urls.add(listing_url)
+
+                    card_body = card.xpath(".//div[contains(@class,'pt-7')][1]")
+                    listing_sub_type = self._clean(" ".join(
+                        card_body[0].xpath(".//ul[1]/li[1]//text()") if card_body else []
+                    ))
+                    listing_size = self._clean(" ".join(
+                        card_body[0].xpath(".//ul[1]/li[last()]//text()") if card_body else []
+                    ))
+                    listing_address = self._clean(" ".join(
+                        card_body[0].xpath("./p[1]//text()") if card_body else []
+                    ))
+
+                    sale_labels = [
+                        self._clean(v)
+                        for v in card.xpath(".//div[contains(@class,'pt-7')]//ul[contains(@class,'font-aeonik')]//li/p/text()")
+                        if self._clean(v)
+                    ]
+                    listing_sale_text = " | ".join(sale_labels)
+
+                    listing_price = self._clean(" ".join(
+                        card.xpath(
+                            ".//div[contains(@class,'pt-7')]"
+                            "//ul[contains(@class,'font-aeonik')]//li/h5[1]//text()"
+                        )
+                    ))
+
+                    listing_images = self._unique([
+                        self.normalize_url(src)
+                        for src in card.xpath(".//div[contains(@class,'property-slider')]//img/@src")
+                        if src
+                    ])
+
+                    listing_rows.append({
+                        "url": listing_url,
+                        "listing_sub_type": listing_sub_type,
+                        "listing_size": listing_size,
+                        "listing_address": listing_address,
+                        "listing_sale_text": listing_sale_text,
+                        "listing_price": listing_price,
+                        "listing_images": listing_images,
+                    })
+
+                processed_count = current_count
+                if max_cards and processed_count >= max_cards:
+                    break
+                if not self._load_more_once(current_count):
+                    break
+
+            for row in listing_rows:
+                try:
+                    obj = self.parse_listing(**row)
+                    if obj:
+                        self.results.append(obj)
+                except Exception:
+                    continue
+
             return self.results
-
-        self._load_all_cards()
-
-        tree = html.fromstring(self.driver.page_source)
-        cards = tree.xpath("//div[contains(@class,'property_card_ajax')]")
-
-        for card in cards:
-            href = self._clean(" ".join(card.xpath(".//h5/a/@href")))
-            if not href:
-                continue
-
-            listing_url = self.normalize_url(href)
-            if listing_url in self.seen_urls:
-                continue
-            self.seen_urls.add(listing_url)
-
-            listing_sub_type = self._clean(" ".join(
-                card.xpath(".//div[contains(@class,'pt-7')]//ul[1]/li[1]//text()")
-            ))
-            listing_size = self._clean(" ".join(
-                card.xpath(".//div[contains(@class,'pt-7')]//ul[1]/li[last()]//text()")
-            ))
-            listing_address = self._clean(" ".join(
-                card.xpath(".//div[contains(@class,'pt-7')]/p[1]//text()")
-            ))
-
-            sale_labels = [
-                self._clean(v)
-                for v in card.xpath(".//div[contains(@class,'pt-7')]//ul[contains(@class,'font-aeonik')]//p/text()")
-                if self._clean(v)
-            ]
-            listing_sale_text = " | ".join(sale_labels)
-
-            listing_for_sale_price = self._clean(" ".join(
-                card.xpath(
-                    ".//div[contains(@class,'pt-7')]"
-                    "//ul[contains(@class,'font-aeonik')]"
-                    "//li[p[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'for sale')]]"
-                    "//h5[1]//text()"
-                )
-            ))
-
-            listing_images = self._unique([
-                self.normalize_url(src)
-                for src in card.xpath(".//div[contains(@class,'property-slider')]//img/@src")
-                if src
-            ])
-
-            try:
-                obj = self.parse_listing(
-                    url=listing_url,
-                    listing_sub_type=listing_sub_type,
-                    listing_size=listing_size,
-                    listing_address=listing_address,
-                    listing_sale_text=listing_sale_text,
-                    listing_for_sale_price=listing_for_sale_price,
-                    listing_images=listing_images,
-                )
-                if obj:
-                    self.results.append(obj)
-            except Exception:
-                continue
-
-        self.driver.quit()
-        return self.results
+        except Exception:
+            return self.results
+        finally:
+            self._close_drivers()
 
     def parse_listing(
         self,
@@ -114,39 +136,45 @@ class RogerHannahScraper:
         listing_size="",
         listing_address="",
         listing_sale_text="",
-        listing_for_sale_price="",
+        listing_price="",
         listing_images=None,
     ):
         listing_images = listing_images or []
 
-        self.driver.get(url)
-
-        try:
-            self.wait.until(EC.presence_of_element_located((By.XPATH, "//main")))
-        except Exception:
+        tree = self._fetch_detail_tree(url)
+        if tree is None:
             return None
 
-        tree = html.fromstring(self.driver.page_source)
+        hero_block = tree.xpath("//main//div[contains(@class,'w-full') and contains(@class,'md:w-1/2')][1]")
 
-        page_title = self._clean(" ".join(tree.xpath("//h1[1]//text()")))
-        detail_address = self._clean(" ".join(tree.xpath("//h2[1]//text()")))
+        page_title = self._clean(" ".join(
+            hero_block[0].xpath(".//h1[1]//text()") if hero_block else tree.xpath("(//h1)[1]//text()")
+        ))
+        detail_address = self._clean(" ".join(
+            hero_block[0].xpath(".//h2[1]//text()") if hero_block else tree.xpath("(//h2)[1]//text()")
+        ))
 
         display_address = detail_address or listing_address or page_title
 
-        property_sub_type = self._clean(" ".join(tree.xpath("//h6[1]//text()"))) or listing_sub_type
+        property_sub_type = self._clean(" ".join(
+            hero_block[0].xpath(".//h6[1]//text()") if hero_block else tree.xpath("(//h6)[1]//text()")
+        )) or listing_sub_type
 
-        detail_size = self._clean(" ".join(
-            tree.xpath(
-                "//p[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'size')]"
-                "/following-sibling::*[1]//text()"
-            )
-        ))
+        detail_size = self._clean(" ".join(tree.xpath(
+            "//p[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'size')]"
+            "/following-sibling::*[1]//text()"
+            " | "
+            "//h3[sub[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'sq ft')"
+            " or contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'acres')]]//text()"
+        )))
 
         detail_sale_text = " | ".join([
             self._clean(v)
             for v in tree.xpath(
-                "//div[contains(@class,'mt-8') and contains(@class,'w-full')]"
-                "//p/text()"
+                "//div[contains(@class,'mt-8') and contains(@class,'w-full')]//p/text()"
+                " | "
+                "//div[contains(@class,'mt-8')]//p[text()[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'for sale') "
+                "or contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'to let')]]/text()"
             )
             if self._clean(v)
         ])
@@ -191,12 +219,12 @@ class RogerHannahScraper:
             or self.normalize_sale_type(detailed_description)
         )
 
-        sale_price_text = listing_for_sale_price or self._clean(" ".join(
-            tree.xpath(
-                "//p[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'for sale')]"
-                "/following-sibling::*[1]//text()"
-            )
-        ))
+        sale_price_text = listing_price or self._clean(" ".join(tree.xpath(
+            "//p[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'for sale')"
+            " or contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'to let')"
+            " or contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'under offer')]"
+            "/following-sibling::*[1]//text()"
+        )))
 
         price = self.extract_numeric_price(sale_price_text or detailed_description, sale_type)
 
@@ -215,6 +243,7 @@ class RogerHannahScraper:
             self.normalize_url(href)
             for href in tree.xpath(
                 "//a[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'download brochure')]/@href"
+                " | //a[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'brochure')]/@href"
                 " | //a[contains(translate(@href, 'PDF', 'pdf'), '.pdf')]/@href"
             )
             if href
@@ -229,6 +258,10 @@ class RogerHannahScraper:
         agent_phone = self._clean(" ".join(
             tree.xpath("//div[@id='first']//a[starts-with(@href, 'tel:')]/text()")
         ))
+        if not agent_phone:
+            agent_phone = self._clean(" ".join(
+                tree.xpath("//div[@id='first']//a[starts-with(@href, 'tel:')]/@href")
+            )).replace("tel:", "")
 
         obj = {
             "listingUrl": url,
@@ -251,10 +284,6 @@ class RogerHannahScraper:
             "tenure": tenure,
             "saleType": sale_type,
         }
-        print("*****"*10)
-        print(obj)
-        print("*****"*10)
-
         return obj
 
     def _load_all_cards(self):
@@ -281,6 +310,105 @@ class RogerHannahScraper:
                 break
 
             attempts += 1
+
+    def _load_more_once(self, current_count):
+        retries = 0
+        while retries < 3:
+            load_more_buttons = self.driver.find_elements(
+                By.XPATH,
+                "//button[@id='load-more']"
+                " | //button[contains(@class,'load-more-btn')]"
+                " | //button[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'show more')]",
+            )
+            if not load_more_buttons:
+                return False
+
+            button = load_more_buttons[0]
+            old_data_page = (button.get_attribute("data-page") or "").strip()
+
+            try:
+                self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", button)
+                time.sleep(0.2)
+                self.driver.execute_script("arguments[0].click();", button)
+            except Exception:
+                retries += 1
+                continue
+
+            try:
+                self.wait.until(
+                    lambda d: len(d.find_elements(By.XPATH, "//div[contains(@class,'property_card_ajax')]")) > current_count
+                )
+                return True
+            except Exception:
+                # On this site, AJAX can update page index before cards append.
+                if old_data_page:
+                    try:
+                        page_changed = self.wait.until(
+                            lambda d: (
+                                (d.find_elements(By.XPATH, "//button[@id='load-more']")[0].get_attribute("data-page") or "").strip()
+                                != old_data_page
+                            ) or len(d.find_elements(By.XPATH, "//button[@id='load-more']")) == 0
+                        )
+                        if page_changed:
+                            time.sleep(0.5)
+                            new_count = len(self.driver.find_elements(By.XPATH, "//div[contains(@class,'property_card_ajax')]"))
+                            if new_count > current_count:
+                                return True
+                    except Exception:
+                        pass
+                retries += 1
+
+        return False
+
+    def _get_expected_card_count(self):
+        try:
+            container = self.driver.find_elements(By.XPATH, "//div[@id='property-container-load']")
+            if not container:
+                return 0
+            val = (container[0].get_attribute("data-found_posts") or "").strip()
+            return int(val) if val.isdigit() else 0
+        except Exception:
+            return 0
+
+    def _fetch_detail_tree(self, url):
+        req = Request(
+            url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+                )
+            },
+        )
+        try:
+            with urlopen(req, timeout=15) as res:
+                html_bytes = res.read()
+            tree = html.fromstring(html_bytes)
+            if tree.xpath("//main"):
+                return tree
+        except Exception:
+            pass
+
+        try:
+            self._ensure_detail_driver()
+            self.detail_driver.get(url)
+            self.detail_wait.until(EC.presence_of_element_located((By.XPATH, "//main")))
+            return html.fromstring(self.detail_driver.page_source)
+        except Exception:
+            return None
+
+    def _ensure_detail_driver(self):
+        if self.detail_driver is not None:
+            return
+        self.detail_driver = webdriver.Chrome(service=self._service, options=self._chrome_options)
+        self.detail_wait = WebDriverWait(self.detail_driver, 20)
+
+    def _close_drivers(self):
+        for drv in [self.driver, self.detail_driver]:
+            try:
+                drv.quit()
+            except Exception:
+                pass
 
     def extract_size(self, text):
         if not text:

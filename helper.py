@@ -73,6 +73,8 @@ SCRAPERS = [
     # 'ridley_thaw',
     # 'r_k_real_estate',
     # 'roger_etchells_co',
-    'roger_hannah',
+    # 'roger_hannah',
+    # 'commercial_property_partners',
+    'cordage_group',
 ]
 

@@ -11,15 +11,9 @@ from selenium.webdriver.support import expected_conditions as EC
 from lxml import html
 
 
-class RKRealEstateScraper:
-
-    BASE_URLS = [
-        "https://www.rkrealestate.co.uk/high-street",
-        "https://www.rkrealestate.co.uk/shopping-centres",
-        "https://www.rkrealestate.co.uk/developments",
-    ]
-
-    DOMAIN = "https://www.rkrealestate.co.uk"
+class CommercialPropertyPartnersScraper:
+    BASE_URL = "https://www.commercialpropertypartners.co.uk/property-search"
+    DOMAIN = "https://www.commercialpropertypartners.co.uk"
 
     def __init__(self):
         self.results = []
@@ -39,25 +33,34 @@ class RKRealEstateScraper:
     # ===================== RUN ===================== #
 
     def run(self):
+        page = 1
 
-        for base_url in self.BASE_URLS:
+        while True:
+            page_url = (
+                self.BASE_URL
+                if page == 1
+                else f"{self.DOMAIN}/ev_property_residential_properties/search/page:{page}?property_type_id=&location="
+            )
 
-            self.driver.get(base_url)
+            self.driver.get(page_url)
 
             try:
                 self.wait.until(EC.presence_of_element_located((
                     By.XPATH,
-                    "//figure[contains(@class,'sqs-block-image-figure')]"
+                    "//div[contains(@class,'card--properties')]"
                 )))
             except Exception:
-                continue
+                break
 
             tree = html.fromstring(self.driver.page_source)
 
             listing_urls = tree.xpath(
-                "//figure[contains(@class,'sqs-block-image-figure')]"
-                "//a[contains(@class,'sqs-button-element')]/@href"
+                "//div[contains(@class,'card--properties')]"
+                "//a[contains(@class,'card--properties-link')]/@href"
             )
+
+            if not listing_urls:
+                break
 
             for href in listing_urls:
                 url = urljoin(self.DOMAIN, href)
@@ -73,83 +76,100 @@ class RKRealEstateScraper:
                 except Exception:
                     continue
 
+            page += 1
+
         self.driver.quit()
         return self.results
 
     # ===================== LISTING ===================== #
 
     def parse_listing(self, url):
-
         self.driver.get(url)
 
         self.wait.until(EC.presence_of_element_located((
             By.XPATH,
-            "//div[contains(@class,'image-title')]"
+            "//div[contains(@class,'property-sidebar')]//h1"
         )))
 
         tree = html.fromstring(self.driver.page_source)
 
         # ---------- DISPLAY ADDRESS ---------- #
         display_address = self._clean(" ".join(
-            tree.xpath(
-                "//div[contains(@class,'image-subtitle')]//h2//text()"
-            )
+            tree.xpath("//div[contains(@class,'property-sidebar')]//h1/text()")
         ))
+
+        # ---------- SALE TYPE ---------- #
+        sale_type_raw = self._clean(" ".join(
+            tree.xpath("//dt[contains(text(),'Tenure:')]/following-sibling::dd[1]/text()")
+        ))
+        sale_type = self.normalize_sale_type(sale_type_raw)
 
         # ---------- PROPERTY SUB TYPE ---------- #
         property_sub_type = self._clean(" ".join(
-            tree.xpath(
-                "//div[contains(@class,'image-title')]//p//text()"
-            )
+            tree.xpath("//dt[contains(text(),'Property Type')]/following-sibling::dd[1]/text()")
         ))
 
-        # ---------- DESCRIPTION ---------- #
-        # ---------- DESCRIPTION (ALL INFO EXCEPT CONTACT) ---------- #
-
-        description_parts = tree.xpath(
-            "//div[contains(@class,'sqs-html-content')]"
-            "[not(.//strong[normalize-space()='Contact'])]"
-            "//text()[not(ancestor::script)]"
-        )
-
-        detailed_description = self._clean(
-            " ".join(t.strip() for t in description_parts if t.strip())
-        )
-
         # ---------- SIZE ---------- #
-        size_ft, size_ac = self.extract_size(detailed_description)
+        size_text = self._clean(" ".join(
+            tree.xpath("//dt[contains(text(),'Size:')]/following-sibling::dd[1]/text()")
+        ))
+        size_ft, size_ac = self.extract_size(size_text)
 
-        # ---------- TENURE ---------- #
-        tenure = self.extract_tenure(detailed_description)
+        # ---------- PRICE BLOCK ---------- #
+        price_block = self._clean(" ".join(
+            tree.xpath("//dt[contains(text(),'Price:')]/following-sibling::dd[1]//text()")
+        ))
 
-        # ---------- SALE TYPE ---------- #
-        # Prefer property type to infer sale intent; fallback to page-wide text.
-        page_text = self._clean(" ".join(tree.xpath("//body//text()")))
-        sale_type = (
-            self.normalize_sale_type(property_sub_type)
-            or self.normalize_sale_type(page_text)
+        # Extract tenure (Leasehold / Freehold) from price block
+        tenure = self.extract_tenure(price_block)
+
+        # Price only if For Sale
+        price = self.extract_numeric_price(price_block, sale_type)
+
+        # ---------- DESCRIPTION ---------- #
+        description_texts = tree.xpath(
+            "//div[@class='row']//div[contains(@class,'col-md-8')]//text()"
         )
+        detailed_description = self._clean(" ".join(description_texts))
 
-        # ---------- PRICE (RULE BASED) ---------- #
-        price = self.extract_numeric_price(page_text, sale_type)
-
-        # ---------- IMAGES ---------- #
-        property_images = tree.xpath(
-            "(//figure[contains(@class,'sqs-block-image-figure')]//img/@src)[1]"
+        # ---------- IMAGES (exclude slick clones) ---------- #
+        property_images = []
+        image_srcs = tree.xpath(
+            "//div[contains(@class,'slick-slide') "
+            "and not(contains(@class,'slick-cloned'))]//img/@src"
         )
+        for src in image_srcs:
+            full = urljoin(self.DOMAIN, src)
+            property_images.append(full)
+
+        property_images = list(dict.fromkeys(property_images))
 
         # ---------- BROCHURE ---------- #
         brochure_urls = [
             urljoin(self.DOMAIN, href)
-            for href in tree.xpath("//a[contains(@href,'.pdf')]/@href")
+            for href in tree.xpath(
+                "//div[contains(@class,'property-download')]"
+                "//a[contains(@class,'btn--download')]/@href"
+            )
         ]
 
-        # ---------- CONTACT ---------- #
-        agent_phone = self._clean(" ".join(
-            tree.xpath(
-                "//p[contains(.,'Ryan Kennedy')]//strong/text()"
-            )
-        ))
+        # ---------- AGENT (FIRST ONLY) ---------- #
+        agent_names = tree.xpath(
+            "//div[contains(@class,'col-md-4')]"
+            "//h3[@class='text-dark']/text()"
+        )
+        agent_emails = tree.xpath(
+            "//div[contains(@class,'col-md-4')]"
+            "//a[starts-with(@href,'mailto:')]/@href"
+        )
+        agent_phones = tree.xpath(
+            "//div[contains(@class,'col-md-4')]"
+            "//a[starts-with(@href,'tel:')]/@href"
+        )
+
+        agent_name = self._clean(agent_names[0]) if agent_names else ""
+        agent_email = agent_emails[0].replace("mailto:", "") if agent_emails else ""
+        agent_phone = agent_phones[0].replace("tel:", "") if agent_phones else ""
 
         obj = {
             "listingUrl": url,
@@ -162,17 +182,16 @@ class RKRealEstateScraper:
             "sizeAc": size_ac,
             "postalCode": self.extract_postcode(display_address),
             "brochureUrl": brochure_urls,
-            "agentCompanyName": "RK Real Estate",
-            "agentName": "Ryan Kennedy",
+            "agentCompanyName": "Commercial Property Partners",
+            "agentName": agent_name,
             "agentCity": "",
-            "agentEmail": "",
+            "agentEmail": agent_email,
             "agentPhone": agent_phone,
             "agentStreet": "",
             "agentPostcode": "",
             "tenure": tenure,
             "saleType": sale_type,
         }
-
 
         return obj
 
@@ -184,16 +203,13 @@ class RKRealEstateScraper:
 
         text = text.lower()
         text = text.replace(",", "")
-        text = text.replace("ft²", "sq ft")
-        text = text.replace("m²", "sqm")
         text = re.sub(r"[–—−]", "-", text)
 
         size_ft = ""
         size_ac = ""
 
         m = re.search(
-            r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*'
-            r'(sq\.?\s*ft\.?|sqft|sf|square\s*feet|square\s*foot|sq\s*feet)',
+            r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*(sq\.?\s*ft|sqft|sf)',
             text
         )
         if m:
@@ -202,8 +218,7 @@ class RKRealEstateScraper:
             size_ft = round(min(a, b), 3) if b else round(a, 3)
 
         m = re.search(
-            r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*'
-            r'(acres?|acre|ac\.?)',
+            r'(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(\d+(?:\.\d+)?)?\s*(acres?|acre)',
             text
         )
         if m:
@@ -212,7 +227,6 @@ class RKRealEstateScraper:
             size_ac = round(min(a, b), 3) if b else round(a, 3)
 
         return size_ft, size_ac
-
 
     def extract_numeric_price(self, text, sale_type):
         if sale_type != "For Sale":
@@ -229,12 +243,11 @@ class RKRealEstateScraper:
             return ""
 
         if any(k in t for k in [
-            "per annum", "pa", "per year", "pcm",
-            "per month", "pw", "per week", "rent"
+            "per annum", "pa", "pcm", "rent"
         ]):
             return ""
 
-        m = re.search(r'[£€]\s*(\d+(?:,\d{3})*(?:\.\d+)?)\s*m?', t)
+        m = re.search(r'[£]\s*(\d+(?:,\d{3})*(?:\.\d+)?)\s*m?', t)
         if not m:
             return ""
 
@@ -244,11 +257,9 @@ class RKRealEstateScraper:
 
         return str(int(num))
 
-
     def extract_tenure(self, text):
         if not text:
             return ""
-
         t = text.lower()
         if "freehold" in t:
             return "Freehold"
@@ -256,13 +267,11 @@ class RKRealEstateScraper:
             return "Leasehold"
         return ""
 
-
     def extract_postcode(self, text):
         if not text:
             return ""
 
         text = text.upper()
-
         full_pattern = r'\b[A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2}\b'
         partial_pattern = r'\b[A-Z]{1,2}\d{1,2}[A-Z]?\b'
 
@@ -273,15 +282,13 @@ class RKRealEstateScraper:
         match = re.search(partial_pattern, text)
         return match.group().strip() if match else ""
 
-
     def normalize_sale_type(self, text):
         t = text.lower()
         if "sale" in t:
             return "For Sale"
-        if "rent" in t or "to let" in t :
+        if "rent" in t or "to let" in t:
             return "To Let"
         return ""
-
 
     def _clean(self, val):
         return " ".join(val.split()) if val else ""
