@@ -42,19 +42,27 @@ class CuthbertWhiteScraper:
 
         tree = html.fromstring(self.driver.page_source)
 
-        listing_urls = tree.xpath(
-            "//article[contains(@class,'portfolio-item')]//h3/a/@href"
-        )
+        listing_cards = tree.xpath("//article[contains(@class,'portfolio-item')]")
 
-        for href in listing_urls:
+        for card in listing_cards:
+            href = self._clean(" ".join(card.xpath(".//h3/a/@href")))
+            if not href:
+                continue
+
             url = urljoin(self.DOMAIN, href)
 
             if url in self.seen_urls:
                 continue
             self.seen_urls.add(url)
 
+            listing_meta = {
+                "title": self._clean(" ".join(card.xpath(".//h3/a/text()"))),
+                "subtitle": self._clean(" ".join(card.xpath(".//div[contains(@class,'portfolio-desc')]//span/text()"))),
+                "status": self._clean(" ".join(card.xpath(".//div[contains(@class,'status')]//p/text()"))),
+            }
+
             try:
-                obj = self.parse_listing(url)
+                obj = self.parse_listing(url, listing_meta)
                 if obj:
                     self.results.append(obj)
             except Exception:
@@ -65,68 +73,91 @@ class CuthbertWhiteScraper:
 
     # ===================== LISTING ===================== #
 
-    def parse_listing(self, url):
+    def parse_listing(self, url, listing_meta=None):
         self.driver.get(url)
 
         self.wait.until(EC.presence_of_element_located((
             By.XPATH,
-            "//div[@class='page-title-text']/h1"
+            "//div[contains(@class,'row')]"
         )))
 
         tree = html.fromstring(self.driver.page_source)
+        listing_meta = listing_meta or {}
+        page_text = self._clean(" ".join(tree.xpath("//body//text()")))
 
         # ---------- DISPLAY ADDRESS ---------- #
         display_address = self._clean(" ".join(
-            tree.xpath("//div[@class='page-title-text']/h1/text()")
+            tree.xpath(
+                "//div[@class='page-title-text']/h1/text()"
+                " | //h1/text()"
+                " | //meta[@property='og:title']/@content"
+            )
         ))
+        if not display_address:
+            display_address = listing_meta.get("title", "")
 
         # ---------- SALE TYPE ---------- #
         sale_type_raw = self._clean(" ".join(
-            tree.xpath("//div[@class='page-title-text']/following::span[1]/text()")
+            tree.xpath(
+                "//div[@class='page-title-text']//span/text()"
+                " | //div[contains(@class,'page-subtitle')]//text()"
+            )
         ))
-
-        page_text = self._clean(" ".join(tree.xpath("//body//text()")))
-        sale_type = self.normalize_sale_type(sale_type_raw) or self.normalize_sale_type(page_text)
+        sale_type_hints = " ".join(filter(None, [
+            sale_type_raw,
+            listing_meta.get("subtitle", ""),
+            listing_meta.get("status", ""),
+            page_text,
+        ]))
+        sale_type = self.normalize_sale_type(sale_type_hints)
 
         # ---------- PRICE ---------- #
-        price = self.extract_numeric_price(page_text, sale_type)
+        price = self.extract_numeric_price(sale_type_hints, sale_type)
         if not price:
             price_text = self._clean(" ".join(
-                tree.xpath("//li/strong[contains(text(),'Offers')]/text()")
+                tree.xpath(
+                    "//li/strong[contains(text(),'Offers')]/text()"
+                    " | //li[contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'offers')]//text()"
+                )
             ))
             price = self.extract_numeric_price(price_text, "For Sale")
 
         # ---------- PROPERTY SUB TYPE ---------- #
-        property_sub_type = ""
+        property_sub_type = self.extract_property_sub_type(" ".join(filter(None, [
+            listing_meta.get("subtitle", ""),
+            page_text,
+        ])))
 
         # ---------- DESCRIPTION ---------- #
         description_parts = tree.xpath(
-            "//div[contains(@class,'ccm-custom-style-container')]"
-            "//p[not(contains(.,'Available Accommodation'))]//text()"
+            "//div[contains(@class,'col-content')]"
+            "//div[contains(@class,'ccm-custom-style-container')]//p//text()"
         )
         detailed_description = self._clean(" ".join(description_parts))
 
         # ---------- SIZE ---------- #
-        size_ft, size_ac = self.extract_size(detailed_description)
+        size_ft, size_ac = self.extract_size(" ".join([detailed_description, page_text]))
 
-        size_rows = [
-            self._clean(v) for v in tree.xpath("//tbody/tr[position()>1]/td[2]/text()") if self._clean(v)
-        ]
-        for size_value in size_rows:
-            row_ft, row_ac = self.extract_size(size_value)
-            if row_ft and (not size_ft or row_ft < size_ft):
-                size_ft = row_ft
-            if row_ac and (not size_ac or row_ac < size_ac):
-                size_ac = row_ac
+        for raw_sqft in tree.xpath("//table//tr[position()>1]/td[2]//text()"):
+            value = self._clean(raw_sqft).replace(",", "")
+            m = re.search(r"\d+(?:\.\d+)?", value)
+            if not m:
+                continue
+            sqft_value = round(float(m.group()), 3)
+            if not size_ft or sqft_value < size_ft:
+                size_ft = sqft_value
 
-        if not size_ft:
-            size_li = self._clean(" ".join(tree.xpath("//li[contains(text(),'sq ft')]/text()")))
-            li_ft, li_ac = self.extract_size(size_li)
-            size_ft = li_ft
-            size_ac = li_ac or size_ac
+        for raw_sqm in tree.xpath("//table//tr[position()>1]/td[3]//text()"):
+            value = self._clean(raw_sqm).replace(",", "")
+            m = re.search(r"\d+(?:\.\d+)?", value)
+            if not m:
+                continue
+            sqft_value = round(float(m.group()) * 10.7639, 3)
+            if not size_ft or sqft_value < size_ft:
+                size_ft = sqft_value
 
         # ---------- TENURE ---------- #
-        tenure = self.extract_tenure(detailed_description)
+        tenure = self.extract_tenure(" ".join([detailed_description, page_text]))
 
         # ---------- IMAGES ---------- #
         images = tree.xpath(
@@ -134,12 +165,19 @@ class CuthbertWhiteScraper:
             "//div[contains(@class,'slide') and not(contains(@class,'clone'))]"
             "//img/@src"
         )
-        property_images = list({urljoin(self.DOMAIN, img) for img in images if img})
+        property_images = []
+        for img in images:
+            absolute_img = urljoin(self.DOMAIN, img)
+            if absolute_img and absolute_img not in property_images:
+                property_images.append(absolute_img)
 
         # ---------- BROCHURE ---------- #
         brochure_urls = [
             urljoin(self.DOMAIN, href)
-            for href in tree.xpath("//a[contains(@href,'download_file')]/@href")
+            for href in tree.xpath(
+                "//a[contains(@href,'download_file')]/@href"
+                " | //a[contains(@href,'.pdf')]/@href"
+            )
         ]
 
         # ---------- AGENT DETAILS ---------- #
@@ -153,7 +191,7 @@ class CuthbertWhiteScraper:
         agent_phone = tree.xpath(
             "//div[contains(@class,'call-agent')]//a[starts-with(@href,'tel:')]/@href"
         )
-        agent_phone = agent_phone[0].replace("tel:", "") if agent_phone else ""
+        agent_phone = agent_phone[0].replace("tel:", "").strip() if agent_phone else ""
 
         obj = {
             "listingUrl": url,
@@ -303,12 +341,30 @@ class CuthbertWhiteScraper:
 
     def normalize_sale_type(self, text):
         t = text.lower()
-        if "for sale" in t and "to let" in t:
-            return "For Sale / To Let"
         if "sale" in t:
             return "For Sale"
         if "rent" in t or "to let" in t:
             return "To Let"
+        return ""
+
+    def extract_property_sub_type(self, text):
+        if not text:
+            return ""
+
+        t = text.lower()
+        mapping = [
+            ("office", "Office"),
+            ("retail", "Retail"),
+            ("industrial", "Industrial"),
+            ("land", "Land"),
+            ("leisure", "Leisure"),
+            ("investment", "Investment"),
+            ("mixed use", "Mixed Use"),
+            ("development", "Development"),
+        ]
+        for key, value in mapping:
+            if key in t:
+                return value
         return ""
 
     def _clean(self, val):
