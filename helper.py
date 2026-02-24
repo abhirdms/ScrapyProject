@@ -84,5 +84,8 @@ SCRAPERS = [
     # 'curson_sowerby_partners', csv remaining
     # 'cuthbert_white',
     # 'cyril_leonard',
+    # 'dabora_conway',
+    # 'dalkin_co',
+    'daniel_hirst',
 ]
 
