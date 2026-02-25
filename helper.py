@@ -89,6 +89,9 @@ SCRAPERS = [
     # 'daniel_hirst',
     # 'davis_coffer_lyons',
     # 'davison_blackett',
-    'd_b_a_sdvisors'
+    # 'd_b_a_sdvisors',
+    # 'd_c_care',
+    # 'deriaz_campsie', csv remaining
+    'd_l_p_surveyors',
 ]
 

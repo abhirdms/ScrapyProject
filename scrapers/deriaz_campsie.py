@@ -1,24 +1,3 @@
-# size_extraction 
-
-
-import re
-
-
-
-
-
-
-
-
-
-
-
-
-
-###################################### template code ########################
-
-
-
 import re
 from urllib.parse import urljoin
 
@@ -32,9 +11,9 @@ from selenium.webdriver.support import expected_conditions as EC
 from lxml import html
 
 
-class HeaneyMicklethwaiteScraper:
-    BASE_URL = "https://www.heaneymicklethwaite.co.uk/all_properties/"
-    DOMAIN = "https://www.heaneymicklethwaite.co.uk"
+class DeriazCampsieScraper:
+    BASE_URL = "https://properties.kemptoncarr.co.uk/"
+    DOMAIN = "https://properties.kemptoncarr.co.uk/"
 
     def __init__(self):
         self.results = []
@@ -54,26 +33,25 @@ class HeaneyMicklethwaiteScraper:
     # ===================== RUN ===================== #
 
     def run(self):
-        page = 1
+        page = 0
 
         while True:
-            page_url = self.BASE_URL if page == 1 else f"{self.BASE_URL}page/{page}/"
+            page_url = f"{self.BASE_URL}?Index={page}"
             self.driver.get(page_url)
 
             try:
                 self.wait.until(EC.presence_of_element_located((
                     By.XPATH,
-                    "//article[contains(@class,'elementor-post')]"
+                    "//div[contains(@class,'property-card-options')]"
                 )))
             except Exception:
                 break
 
             tree = html.fromstring(self.driver.page_source)
 
-            # ✅ FIXED: ONLY elementor-cta links
             listing_urls = tree.xpath(
-                "//article[contains(@class,'elementor-post')]"
-                "//a[contains(@class,'elementor-cta')]/@href"
+                "//div[contains(@class,'property-card-options')]"
+                "//a[contains(@class,'property-card')]/@href"
             )
 
             if not listing_urls:
@@ -105,87 +83,122 @@ class HeaneyMicklethwaiteScraper:
 
         self.wait.until(EC.presence_of_element_located((
             By.XPATH,
-            "//h2[contains(@class,'elementor-heading-title')]"
+            "//section[contains(@class,'page-banner')]//h1"
         )))
 
         tree = html.fromstring(self.driver.page_source)
 
         # ---------- DISPLAY ADDRESS ---------- #
-        display_address = self._clean(" ".join(
+        title = self._clean(" ".join(
+            tree.xpath("//section[contains(@class,'page-banner')]//h1/text()")
+        ))
+
+        subtitle = self._clean(" ".join(
+            tree.xpath("//section[contains(@class,'page-banner')]//p[contains(@class,'page-description')]/text()")
+        ))
+
+        display_address = f"{title}, {subtitle}".strip(", ")
+
+        # ---------- SALE TYPE ---------- #
+        sale_raw = self._clean(" ".join(
             tree.xpath(
-                "//section[contains(@class,'elementor-inner-section')]"
-                "//div[@data-widget_type='heading.default']"
-                "//h2[contains(@class,'elementor-heading-title')]/text()"
+                "(//section[contains(@class,'page-banner')]"
+                "//p[contains(@class,'item-size')])[last()]/text()"
             )
         ))
 
-
-
-        # ---------- SALE TYPE (HELPER-DRIVEN) ---------- #
-        sale_type_raw = self._clean(" ".join(
-            tree.xpath(
-                "//h5[contains(translate(text(),"
-                "'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'offer')]"
-                "/following::h3[1]/a/text()"
-            )
-        )) or display_address
-
-        sale_type = self.normalize_sale_type(sale_type_raw)
+        sale_type = self.normalize_sale_type(sale_raw)
 
         # ---------- PROPERTY SUB TYPE ---------- #
         property_sub_type = self._clean(" ".join(
             tree.xpath(
-                "//h5[normalize-space()='PROPERTRY TYPE']"
-                "/following::h3[1]/a/text()"
+                "//section[contains(@class,'page-banner')]"
+                "//p[contains(@class,'item-type')]/text()"
             )
         ))
 
-        general_info = self.get_section_text(tree, "General Information")
-        location_details = self.get_section_text(tree, "Location Details")
-        accommodation_details = self.get_section_text(tree, "Accomodation Details")
-        rent_details = self.get_section_text(tree, "Rent Details")
-        lease_terms = self.get_section_text(tree, "Lease/Rent Terms")
+        # ---------- DESCRIPTION ---------- #
+        description = self._clean(" ".join(
+            tree.xpath(
+                "//h2[normalize-space()='Description']"
+                "/following-sibling::p[1]//text()"
+            )
+        ))
+
+        location = self._clean(" ".join(
+            tree.xpath(
+                "//h2[normalize-space()='Location']"
+                "/following-sibling::p[1]//text()"
+            )
+        ))
+
+        features = self._clean(" ".join(
+            tree.xpath(
+                "//h2[contains(text(),'Key features')]"
+                "/following-sibling::div//p/text()"
+            )
+        ))
 
         detailed_description = " ".join(
-            part for part in [
-                general_info,
-                location_details,
-                accommodation_details,
-                rent_details,
-                lease_terms
-            ] if part
+            part for part in [description, location, features] if part
         )
 
-        detailed_description = " ".join(
-            part for part in [
-                general_info,
-                location_details,
-                accommodation_details
-            ] if part
-        )
+        # ---------- SIZE ---------- #
+        banner_size = self._clean(" ".join(
+            tree.xpath(
+                "(//section[contains(@class,'page-banner')]"
+                "//p[contains(@class,'item-size')])[1]/text()"
+            )
+        ))
 
-        # ---------- SIZE (FROM DESCRIPTION ONLY) ---------- #
-        size_ft, size_ac = self.extract_size(detailed_description)
+        size_ft, size_ac = self.extract_size(banner_size)
 
-        # ---------- TENURE (FROM DESCRIPTION ONLY) ---------- #
+        # ---------- TENURE ---------- #
         tenure = self.extract_tenure(detailed_description)
 
-        # ---------- PRICE (ONLY IF FOR SALE) ---------- #
-        price = self.extract_numeric_price(detailed_description, sale_type)
+        # ---------- PRICE ---------- #
+        price = self.extract_numeric_price(sale_raw, sale_type)
 
         # ---------- IMAGES ---------- #
-        property_images = [
+        property_images = list(set([
             src for src in tree.xpath(
-                "//div[contains(@class,'elementor-widget-image')]"
-                "//img/@data-lazy-src"
+                "//li[contains(@class,'splide__slide') and not(contains(@class,'clone'))]"
+                "//img/@src"
             ) if src
-        ]
+        ]))
 
         # ---------- BROCHURE ---------- #
         brochure_urls = [
             urljoin(self.DOMAIN, href)
-            for href in tree.xpath("//a[contains(@href,'.pdf')]/@href")
+            for href in tree.xpath(
+                "//a[contains(@href,'ViewFile')]/@href"
+            )
         ]
+
+        # ---------- AGENT ---------- #
+       # ---------- AGENT (SINGLE ONLY) ---------- #
+        agent_name = ""
+        agent_phone = ""
+        agent_email = ""
+
+        agent_block = tree.xpath("//div[contains(@class,'agent-details')][1]")
+
+        if agent_block:
+            agent = agent_block[0]
+
+            agent_name = self._clean(" ".join(
+                agent.xpath(".//p[contains(@class,'agent-name')]/text()")
+            ))
+
+            agent_phone = self._clean(" ".join(
+                agent.xpath(".//a[starts-with(@href,'tel:')]/text()")
+            ))
+
+            agent_email = self._clean(" ".join(
+                [e.replace("mailto:", "") for e in
+                agent.xpath(".//a[starts-with(@href,'mailto:')]/@href")]
+            ))
+
         obj = {
             "listingUrl": url,
             "displayAddress": display_address,
@@ -197,32 +210,24 @@ class HeaneyMicklethwaiteScraper:
             "sizeAc": size_ac,
             "postalCode": self.extract_postcode(display_address),
             "brochureUrl": brochure_urls,
-            "agentCompanyName": "Heaney Micklethwaite",
-            "agentName": "",
+            "agentCompanyName": "Kempton Carr Croft",
+            "agentName": agent_name,
             "agentCity": "",
-            "agentEmail": "",
-            "agentPhone": "",
+            "agentEmail": agent_email,
+            "agentPhone": agent_phone,
             "agentStreet": "",
             "agentPostcode": "",
             "tenure": tenure,
             "saleType": sale_type,
         }
-        print("*****"*10)
+
+        print("*****" * 10)
         print(obj)
-        print("*****"*10)
+        print("*****" * 10)
+
         return obj
 
     # ===================== HELPERS ===================== #
-
-    def get_section_text(self,tree, heading):
-        return self._clean(" ".join(
-            tree.xpath(
-                f"//h3[normalize-space()='{heading}']"
-                "/ancestor::div[contains(@class,'elementor-widget')]"
-                "/following-sibling::div[contains(@class,'elementor-widget-text-editor')][1]"
-                "//p//text()"
-            )
-        ))
 
     def extract_size(self, text):
         if not text:
@@ -287,7 +292,6 @@ class HeaneyMicklethwaiteScraper:
 
         return size_ft, size_ac
 
-
     def extract_numeric_price(self, text, sale_type):
         if sale_type != "For Sale":
             return ""
@@ -321,15 +325,14 @@ class HeaneyMicklethwaiteScraper:
     def extract_tenure(self, text):
         if not text:
             return ""
-
         t = text.lower()
         if "freehold" in t:
             return "Freehold"
-        if "leasehold" in t :
+        if "leasehold" in t:
             return "Leasehold"
         return ""
 
-    def extract_postcode(self, text: str):
+    def extract_postcode(self , text: str):
         if not text:
             return ""
 
