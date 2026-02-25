@@ -1,4 +1,5 @@
 import re
+from urllib.request import Request, urlopen
 from urllib.parse import urljoin, urlparse, parse_qs
 
 from selenium import webdriver
@@ -22,13 +23,28 @@ class DanielHirstScraper:
     def __init__(self):
         self.results = []
         self.seen_urls = set()
+        self.http_headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
+        }
 
         chrome_options = Options()
         chrome_options.binary_location = "/usr/bin/chromium-browser"
+        chrome_options.page_load_strategy = "eager"
         chrome_options.add_argument("--headless=new")
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--blink-settings=imagesEnabled=false")
         chrome_options.add_argument("--window-size=1920,1080")
+        chrome_options.add_experimental_option(
+            "prefs",
+            {
+                "profile.managed_default_content_settings.images": 2,
+            },
+        )
 
         service = Service("/usr/bin/chromedriver")
         self.driver = webdriver.Chrome(service=service, options=chrome_options)
@@ -114,13 +130,9 @@ class DanielHirstScraper:
     # ===================== LISTING ===================== #
 
     def parse_listing(self, url, sale_type):
-        self.driver.get(url)
-        self.wait.until(EC.presence_of_element_located((
-            By.XPATH,
-            "//div[@id='propertyTitle']//h1",
-        )))
-
-        tree = html.fromstring(self.driver.page_source)
+        tree = self._fetch_detail_tree(url)
+        if tree is None:
+            return None
 
         display_address = self._clean(" ".join(
             tree.xpath("//div[@id='propertyTitle']//h1/text()")
@@ -194,9 +206,10 @@ class DanielHirstScraper:
             "tenure": tenure,
             "saleType": sale_type,
         }
-        print("*****" * 10)
+
+        print("*****"*10)
         print(obj)
-        print("*****" * 10)
+        print("*****"*10)
         return obj 
 
     # ===================== HELPERS ===================== #
@@ -325,3 +338,25 @@ class DanielHirstScraper:
 
     def _clean(self, val):
         return " ".join(val.split()) if val else ""
+
+    def _fetch_detail_tree(self, url):
+        try:
+            req = Request(url, headers=self.http_headers)
+            with urlopen(req, timeout=12) as response:
+                content = response.read()
+            tree = html.fromstring(content)
+            has_title = bool(tree.xpath("//div[@id='propertyTitle']//h1"))
+            if has_title:
+                return tree
+        except Exception:
+            pass
+
+        try:
+            self.driver.get(url)
+            self.wait.until(EC.presence_of_element_located((
+                By.XPATH,
+                "//div[@id='propertyTitle']//h1",
+            )))
+            return html.fromstring(self.driver.page_source)
+        except Exception:
+            return None

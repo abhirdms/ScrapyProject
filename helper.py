@@ -86,6 +86,7 @@ SCRAPERS = [
     # 'cyril_leonard',
     # 'dabora_conway',
     # 'dalkin_co',
-    'daniel_hirst',
+    # 'daniel_hirst',
+    # 'davis_coffer_lyons',
 ]
 
