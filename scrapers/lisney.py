@@ -94,11 +94,9 @@ class LisneyScraper:
                         obj = self.parse_listing(url, display_address)
                         if obj:
                             self.results.append(obj)
-                    except Exception as e:
-                        print(f"Error parsing: {url} | {e}")
+                    except Exception:
                         continue
 
-                # 🔴 STOP CONDITION
                 if not new_items_found:
                     break
 
