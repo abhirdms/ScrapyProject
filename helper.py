@@ -92,6 +92,16 @@ SCRAPERS = [
     # 'd_b_a_sdvisors',
     # 'd_c_care',
     # 'deriaz_campsie', csv remaining
-    'd_l_p_surveyors',
+    # 'd_l_p_surveyors',
+    # 'drakesfield',
+    # 'd_t_r_e', csv remaining
+    # 'dunitz_co',
+    # 'dunster_morton', csv remaining
+    # 'durlings'
+    # 'edgerley_simpson_howe',
+    # 'elsom_spettigue_associates',
+    # 'emanuel_oliver',
+    # 'emberson_co',
+
 ]
 
