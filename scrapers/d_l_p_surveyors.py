@@ -12,8 +12,9 @@ from lxml import html
 
 
 class DLPSurveyorsScraper:
-    BASE_URL = "https://www.dlpsurveyors.co.uk/available-properties"
+    BASE_URL = "https://www.dlpsurveyors.co.uk/products"
     DOMAIN = "https://www.dlpsurveyors.co.uk"
+    AGENT_COMPANY = "DLP Surveyors"
 
     def __init__(self):
         self.results = []
@@ -33,11 +34,13 @@ class DLPSurveyorsScraper:
     # ===================== RUN ===================== #
 
     def run(self):
-        self.driver.get(self.BASE_URL)
-
         page = 1
 
         while True:
+            page_url = f"{self.BASE_URL}?Page={page}"
+
+            self.driver.get(page_url)
+
             try:
                 self.wait.until(EC.presence_of_element_located((
                     By.XPATH,
@@ -48,68 +51,74 @@ class DLPSurveyorsScraper:
 
             tree = html.fromstring(self.driver.page_source)
 
-            listing_urls = tree.xpath(
-                "//div[contains(@class,'product--listView')]"
-                "//a[contains(@class,'product-img')]/@href"
-            )
+            listing_blocks = tree.xpath("//div[contains(@class,'product--listView')]")
 
-            if not listing_urls:
+            if not listing_blocks:
                 break
 
-            for href in listing_urls:
-                url = urljoin(self.DOMAIN, href)
+            for block in listing_blocks:
+
+                href = block.xpath(".//a[contains(@class,'product-img')]/@href")
+                if not href:
+                    continue
+
+                url = urljoin(self.DOMAIN, href[0])
 
                 if url in self.seen_urls:
                     continue
                 self.seen_urls.add(url)
 
+                # ---------- SALE TYPE FROM LISTING ---------- #
+                listing_text = " ".join(
+                    block.xpath(".//h3[contains(@class,'product_location')]//a/text()")
+                ).strip()
+
+                sale_type = self.normalize_sale_type_from_listing(listing_text)
+
+                # ---------- SIZE FROM LISTING ---------- #
+                size_ft_listing, size_ac_listing = self.extract_size(listing_text)
+
                 try:
-                    obj = self.parse_listing(url)
+                    obj = self.parse_listing(
+                        url,
+                        sale_type,
+                        size_ft_listing,
+                        size_ac_listing
+                    )
                     if obj:
                         self.results.append(obj)
                 except Exception:
                     continue
 
-            # ---------- PAGINATION (RadDataPager) ---------- #
-            try:
-                next_btn = self.driver.find_element(By.CLASS_NAME, "rdpPageNext")
-                if not next_btn.is_enabled():
-                    break
-                next_btn.click()
-                page += 1
-            except Exception:
-                break
+            page += 1
 
         self.driver.quit()
         return self.results
 
-    # ===================== LISTING ===================== #
+    # ===================== LISTING DETAIL ===================== #
 
-    def parse_listing(self, url):
+    def parse_listing(self, url, sale_type, size_ft_listing, size_ac_listing):
         self.driver.get(url)
 
         self.wait.until(EC.presence_of_element_located((
             By.XPATH,
-            "//h2[contains(@class,'product_title')] | //table[@id='MainContent_ctl00_ProductDetails_fvDescription']"
+            "//span[contains(@id,'BreadCrumbs_headingTxt')]"
         )))
 
         tree = html.fromstring(self.driver.page_source)
 
         # ---------- DISPLAY ADDRESS ---------- #
         display_address = self._clean(" ".join(
-            tree.xpath("//h2[contains(@class,'product_title')]/text()")
+            tree.xpath("//span[contains(@id,'BreadCrumbs_headingTxt')]/text()")
         ))
 
         # ---------- DESCRIPTION ---------- #
         desc_parts = tree.xpath(
-            "//table[@id='MainContent_ctl00_ProductDetails_fvDescription']//td//text()"
+            "//table[contains(@id,'fvDescription')]//td//text()"
         )
 
-        description = " ".join(
-            t.strip() for t in desc_parts if t.strip()
-        )
+        description = " ".join(t.strip() for t in desc_parts if t.strip())
 
-        # Features tab
         features = tree.xpath(
             "//div[contains(@id,'RadPageView2')]//li//text()"
         )
@@ -121,11 +130,11 @@ class DLPSurveyorsScraper:
 
         detailed_description = self._clean(description)
 
-        # ---------- SALE TYPE ---------- #
-        sale_type = self.normalize_sale_type(display_address + " " + detailed_description)
+        # ---------- SIZE (DETAIL FALLBACK) ---------- #
+        size_ft_detail, size_ac_detail = self.extract_size(detailed_description)
 
-        # ---------- SIZE ---------- #
-        size_ft, size_ac = self.extract_size(display_address + " " + detailed_description)
+        size_ft = size_ft_listing or size_ft_detail
+        size_ac = size_ac_listing or size_ac_detail
 
         # ---------- TENURE ---------- #
         tenure = self.extract_tenure(detailed_description)
@@ -169,7 +178,7 @@ class DLPSurveyorsScraper:
             "sizeAc": size_ac,
             "postalCode": self.extract_postcode(display_address),
             "brochureUrl": brochure_urls,
-            "agentCompanyName": "DLP Surveyors",
+            "agentCompanyName": self.AGENT_COMPANY,
             "agentName": agent_name,
             "agentCity": "",
             "agentEmail": agent_email,
@@ -180,13 +189,21 @@ class DLPSurveyorsScraper:
             "saleType": sale_type,
         }
 
-        print("*****" * 10)
-        print(obj)
-        print("*****" * 10)
 
         return obj
 
     # ===================== HELPERS ===================== #
+
+    def normalize_sale_type_from_listing(self, text):
+        t = text.lower()
+
+        if any(k in t for k in ["to let", "rent"]):
+            return "To Let"
+
+        if any(k in t for k in ["for sale", "lease for sale"]):
+            return "For Sale"
+
+        return ""
 
     def extract_size(self, text):
         if not text:
@@ -269,14 +286,6 @@ class DLPSurveyorsScraper:
 
         match = re.search(partial_pattern, text)
         return match.group().strip() if match else ""
-
-    def normalize_sale_type(self, text):
-        t = text.lower()
-        if "sale" in t:
-            return "For Sale"
-        if "rent" in t or "to let" in t:
-            return "To Let"
-        return ""
 
     def _clean(self, val):
         return " ".join(val.split()) if val else ""
