@@ -106,6 +106,8 @@ SCRAPERS = [
     # 'e_r_i_c_surveyors',
     # 'e_t_p_property',
     # 'everard_cole',
-
+    # 'exigen_property',
+    # 'e_y_c_o', csv remaining and pagination check
+    # 'fairhurst_buckley',
 ]
 
