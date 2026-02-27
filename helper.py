@@ -116,5 +116,8 @@ SCRAPERS = [
     # 'fleurets',
     # 'flude_property_consultants',
     # 'forge',
+    # 'francis_darrah',
+    'frazer_kidd_partners',
+
 ]
 

@@ -167,9 +167,6 @@ class FirstCityScraper:
             "tenure": tenure,
             "saleType": sale_type,
         }
-        print("**" * 20)
-        print(obj)  
-        print("**" * 20)  
 
         return obj
 
