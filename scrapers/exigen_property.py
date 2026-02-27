@@ -77,8 +77,6 @@ class ExigenPropertyScraper:
                 except Exception:
                     continue
 
-            print(f"Finished page {page}")
-
             page += 1
 
         self.driver.quit()
@@ -190,9 +188,7 @@ class ExigenPropertyScraper:
             "saleType": sale_type,
         }
 
-        print("*****" * 10)
-        print(obj)
-        print("*****" * 10)
+ 
 
         return obj
 

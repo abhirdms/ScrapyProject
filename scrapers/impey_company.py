@@ -63,8 +63,7 @@ class ImpeyCompanyScraper:
                 obj = self.parse_listing(url)
                 if obj:
                     self.results.append(obj)
-            except Exception as e:
-                print(f"Error parsing {url}: {e}")
+            except Exception:
                 continue
 
         self.driver.quit()

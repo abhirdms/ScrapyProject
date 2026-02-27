@@ -36,7 +36,6 @@ class HartnellTaylorCookScraper:
 
         while True:
             url = self.BASE_URL if page == 1 else f"{self.BASE_URL}page/{page}/"
-            print(f"Fetching: {url}")
 
             self.driver.get(url)
 
