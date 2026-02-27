@@ -141,9 +141,6 @@ class FTLindenScraper:
             "saleType": sale_type,
         }
 
-        print("*****" * 10)
-        print(obj)
-        print("*****" * 10)
 
         return obj
 

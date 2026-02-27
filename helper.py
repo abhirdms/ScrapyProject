@@ -77,7 +77,6 @@ SCRAPERS = [
     # 'commercial_property_partners',
     # 'cordage_group',
     # 'cortex_partners',
-    
     # 'cradick_retail',
     # 'crossland_otter_hunt'.
     # 'crow_watkin',
@@ -107,7 +106,7 @@ SCRAPERS = [
     # 'e_t_p_property',
     # 'everard_cole',
     # 'exigen_property',
-    # 'e_y_c_o', #csv remaining and pagination check
+    # 'e_y_c_o', #csv remaining
     # 'fairhurst_buckley',
     # 'fawcett_mead',
     # 'fifield_glyn',
@@ -120,7 +119,8 @@ SCRAPERS = [
     # 'frazer_kidd_partners',
     # 'f_t_linden',
     # 'f_t_d_johns',
-    'gale_priggen_co',
+    # 'gale_priggen_co',
+    # 'gavin_black_partners',#csv remaining
 
 ]
 
