@@ -117,7 +117,10 @@ SCRAPERS = [
     # 'flude_property_consultants',
     # 'forge',
     # 'francis_darrah',
-    'frazer_kidd_partners',
+    # 'frazer_kidd_partners',
+    # 'f_t_linden',
+    # 'f_t_d_johns',
+    'gale_priggen_co',
 
 ]
 

@@ -238,7 +238,7 @@ class FrazerKiddPartnersScraper:
             "sizeAc": size_ac,
             "postalCode": self.extract_postcode(display_address),
             "brochureUrl": brochure_urls,
-            "agentCompanyName": "Frazer Kidd Partners",
+            "agentCompanyName": "Frazer Kidd & Partners",
             "agentName": agent_name,
             "agentCity": "",
             "agentEmail": agent_email,
