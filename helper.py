@@ -121,6 +121,10 @@ SCRAPERS = [
     # 'f_t_d_johns',
     # 'gale_priggen_co',
     # 'gavin_black_partners',#csv remaining
+    #  'collins_jarvis',
+    # 'chancellor_sons',
+    # 'colston_colston', 
+    'charterwood',
 
 ]
 
