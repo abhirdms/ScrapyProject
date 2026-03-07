@@ -11,7 +11,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from lxml import html
 
 
-class McMullenRealEstateScraper:
+class McmullenRealEstateScraper:
     BASE_URL = "https://www.mcmullenre.com/search/"
     DOMAIN = "https://www.mcmullenre.com"
 
@@ -97,7 +97,6 @@ class McMullenRealEstateScraper:
 
         description = section_data.get("Description", "")
         location = section_data.get("Location", "")
-        property_sub_type = section_data.get("Class", "")
         availability = section_data.get("Availability", "")
         rent = section_data.get("Rent", "")
         lease_term = section_data.get("Lease Term", "")
@@ -111,7 +110,6 @@ class McMullenRealEstateScraper:
             part for part in [
                 description,
                 location,
-                property_sub_type,
                 availability,
                 rent,
                 lease_term,
@@ -137,39 +135,38 @@ class McMullenRealEstateScraper:
 
         brochure_urls = [
             self._clean(urljoin(self.DOMAIN, href))
-            for href in tree.xpath("//a[contains(@href,'.pdf')]/@href")
+            for href in tree.xpath(
+                "//div[contains(@class,'property__info') or contains(@class,'property__downloads')]"
+                "//a[contains(@href,'.pdf')]/@href"
+                " | "
+                "//main[contains(@class,'property')]"
+                "//a[contains(@href,'.pdf') and not(contains(@href,'Privacy') or contains(@href,'privacy') or contains(@href,'Terms') or contains(@href,'terms') or contains(@href,'Website'))]/@href"
+            )
             if self._clean(href)
         ]
         brochure_urls = list(dict.fromkeys(brochure_urls))
 
-        agent_names = [
-            self._clean(name)
-            for name in tree.xpath(
-                "//div[contains(@class,'property__contacts')]//h3/text()"
-            )
-            if self._clean(name)
-        ]
-        agent_name = ", ".join(agent_names)
+        agent_names = tree.xpath(
+            "//div[contains(@class,'property__contacts')]//h3/text()"
+        )
+        agent_name = self._clean(agent_names[0]) if agent_names else ""
 
-        agent_emails = [
-            self._clean(mail.replace("mailto:", ""))
-            for mail in tree.xpath(
-                "//div[contains(@class,'property__contacts')]//a[starts-with(@href,'mailto:')]/@href"
-            )
-            if self._clean(mail)
-        ]
-        agent_email = ", ".join(agent_emails)
+        agent_emails = tree.xpath(
+            "//div[contains(@class,'property__contacts')]//a[starts-with(@href,'mailto:')]/@href"
+        )
+        agent_email = self._clean(agent_emails[0].replace("mailto:", "")) if agent_emails else ""
 
-        contacts_text = self._clean(" ".join(
-            tree.xpath("//div[contains(@class,'property__contacts')]//p//text()")
-        ))
+        contacts_blocks = tree.xpath(
+            "//div[contains(@class,'property__contacts')]//p//text()"
+        )
+        contacts_text = self._clean(" ".join(contacts_blocks[:3]))  # limit to first contact block
         agent_phone = self.extract_phone(contacts_text)
 
         obj = {
             "listingUrl": url,
             "displayAddress": display_address,
             "price": price,
-            "propertySubType": property_sub_type,
+            "propertySubType": "",
             "propertyImage": property_images,
             "detailedDescription": detailed_description,
             "sizeFt": size_ft,

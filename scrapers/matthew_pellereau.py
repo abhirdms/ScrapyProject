@@ -12,7 +12,7 @@ from lxml import html
 
 
 class MatthewPellereauScraper:
-    BASE_URL = "https://www.matthewpellereau.co.uk/properties"
+    BASE_URL = "https://www.matthewpellereau.co.uk/#portfolio"
     DOMAIN = "https://www.matthewpellereau.co.uk"
 
     def __init__(self):
@@ -42,19 +42,58 @@ class MatthewPellereauScraper:
 
         tree = html.fromstring(self.driver.page_source)
 
+        # Build a mapping: portfolio-item element -> its section heading (h2 text)
+        # Strategy: walk all elements in document order, track the last h2 seen,
+        # and record it for every portfolio-item we encounter.
+        subtype_map = self._build_subtype_map(tree)
+
         listing_blocks = tree.xpath("//div[contains(@class,'portfolio-item')]")
 
         for block in listing_blocks:
-            obj = self.parse_listing(block)
+            # Use the pre-built map to get the correct section heading
+            property_sub_type = subtype_map.get(id(block), "")
+            obj = self.parse_listing(block, property_sub_type)
             if obj:
                 self.results.append(obj)
 
         self.driver.quit()
         return self.results
 
+    # ===================== SUBTYPE MAP ===================== #
+
+    def _build_subtype_map(self, tree):
+        """
+        Walk the entire document tree in document order.
+        Whenever an <h2> is encountered, update the current section label.
+        Whenever a div.portfolio-item is encountered, map its id() to the
+        current section label.
+
+        This is robust against any nesting depth and avoids broken XPath
+        preceding:: axis lookups.
+        """
+        subtype_map = {}
+        current_section = ""
+
+        for element in tree.iter():
+            tag = element.tag if isinstance(element.tag, str) else ""
+
+            # Detect section headings
+            if tag.lower() == "h2":
+                text = self._clean("".join(element.itertext()))
+                if text:
+                    current_section = text
+
+            # Detect portfolio items
+            elif tag.lower() == "div":
+                classes = element.get("class", "")
+                if "portfolio-item" in classes:
+                    subtype_map[id(element)] = current_section
+
+        return subtype_map
+
     # ===================== LISTING ===================== #
 
-    def parse_listing(self, block):
+    def parse_listing(self, block, property_sub_type):
         href = self._clean("".join(block.xpath(".//a/@href")))
         if not href:
             return None
@@ -76,12 +115,6 @@ class MatthewPellereauScraper:
 
         display_address = lines[0]
         detailed_description = self._clean(" ".join(lines))
-
-        property_sub_type = self._clean(
-            block.xpath(
-                "normalize-space(preceding::div[contains(@class,'col-lg-12')][1]//h2)"
-            )
-        )
 
         sale_type = self.normalize_sale_type(detailed_description)
         tenure = self.extract_tenure(detailed_description)
@@ -114,6 +147,7 @@ class MatthewPellereauScraper:
             "tenure": tenure,
             "saleType": sale_type,
         }
+
 
         return obj
 
