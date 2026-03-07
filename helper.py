@@ -124,7 +124,15 @@ SCRAPERS = [
     #  'collins_jarvis',
     # 'chancellor_sons',
     # 'colston_colston', 
-    'charterwood',
-
+    # 'charterwood',
+    # lunson_mitchenall,
+    # mark_jenkinson_son,
+    # matthew_pellereau,   
+    # mcMullen_real_estate,
+    # metcalf_harland,
+    # muxworthy,
+    # mp_real_estate,
+    # n_j_w_e,
+    # n_p_s_group,
 ]
 
