@@ -134,5 +134,8 @@ SCRAPERS = [
     # mp_real_estate,
     # n_j_w_e,
     # n_p_s_group,
+    # 'c_w_m',
+    # 'freeman_property_auctioneers',
+    # 'mc_gillivrays',
 ]
 
