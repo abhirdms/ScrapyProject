@@ -289,13 +289,16 @@ class HeaneyMicklethwaiteScraper:
         ]):
             return ""
 
-        m = re.search(r'[£€]\s*(\d+(?:,\d{3})*(?:\.\d+)?)\s*m?', t)
+        m = re.search(r"(?:\u00a3|\u00c2\u00a3|\u20ac|\u00e2\u201a\u00ac)\s*(\d+(?:,\d{3})*(?:\.\d+)?)(\s*[mk])?", t)
         if not m:
             return ""
 
         num = float(m.group(1).replace(",", ""))
-        if "m" in m.group(0):
+        suffix = (m.group(2) or "").strip().lower()
+        if suffix == "m":
             num *= 1_000_000
+        if suffix == "k":
+            num *= 1_000
 
         return str(int(num))
 

@@ -121,9 +121,7 @@ class MetcalfHarlandScraper:
         sale_type = self.normalize_sale_type(" ".join([
             url,
             display_address,
-            listing_summary.get("summary_text", ""),
-            detailed_description,
-            "current sales",
+            detailed_description
         ]))
         size_ft, size_ac = self.extract_size(detailed_description)
         tenure = self.extract_tenure(detailed_description)
@@ -222,7 +220,7 @@ class MetcalfHarlandScraper:
         return size_ft, size_ac
 
     def extract_numeric_price(self, text, sale_type):
-        if sale_type and sale_type != "For Sale":
+        if sale_type != "For Sale":
             return ""
 
         if not text:
@@ -236,7 +234,8 @@ class MetcalfHarlandScraper:
             return ""
 
         if any(k in t for k in [
-            "per annum", "pa", "per year", "pcm", "per month", "pw", "per week", "rent"
+            "per annum", "pa", "per year", "pcm",
+            "per month", "pw", "per week", "rent"
         ]):
             return ""
 
@@ -283,7 +282,7 @@ class MetcalfHarlandScraper:
         t = (text or "").lower()
         if any(k in t for k in ["for sale", "current sales", "sale", "oieo", "oiro", "stc", "sstc"]):
             return "For Sale"
-        if any(k in t for k in ["to let", "to rent", "rent", "lease"]):
+        if any(k in t for k in ["to let", "to rent", "rent"]):
             return "To Let"
         return ""
 
