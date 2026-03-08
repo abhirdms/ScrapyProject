@@ -11,7 +11,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from lxml import html
 
 
-class MuxworthyLLPScraper:
+class MuxworthyScraper:
     BASE_URL = "http://www.muxworthyllp.com/coastal.php"
     DOMAIN = "http://www.muxworthyllp.com"
 
@@ -19,13 +19,14 @@ class MuxworthyLLPScraper:
         self.results = []
 
         chrome_options = Options()
-        chrome_options.binary_location = "/usr/bin/chromium-browser"
+        # chrome_options.binary_location = "/usr/bin/chromium-browser"
         chrome_options.add_argument("--headless=new")
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--window-size=1920,1080")
 
-        service = Service("/usr/bin/chromedriver")
+        # service = Service("/usr/bin/chromedriver")
+        service = Service("C:/Users/educa/Downloads/ScrapyProject/ScrapyProject/chromedriver.exe")
         self.driver = webdriver.Chrome(service=service, options=chrome_options)
         self.wait = WebDriverWait(self.driver, 20)
 
@@ -92,21 +93,23 @@ class MuxworthyLLPScraper:
         # ---------- PRICE ---------- #
         price = self.extract_numeric_price(detailed_description)
 
+        sale_type = self.normalize_sale_type(detailed_description)
+
         # ---------- POSTCODE ---------- #
         postal_code = self.extract_postcode(detailed_description)
 
         obj = {
-            "listingUrl": self.BASE_URL,
+            "listingUrl": brochure_urls[0],
             "displayAddress": display_address,
             "price": price,
-            "propertySubType": "House",
+            "propertySubType": "",
             "propertyImage": property_images,
             "detailedDescription": detailed_description,
             "sizeFt": size_ft,
             "sizeAc": size_ac,
             "postalCode": postal_code,
             "brochureUrl": brochure_urls,
-            "agentCompanyName": "Muxworthy LLP",
+            "agentCompanyName": "Muxworthy",
             "agentName": "",
             "agentCity": "",
             "agentEmail": "",
@@ -114,7 +117,7 @@ class MuxworthyLLPScraper:
             "agentStreet": "",
             "agentPostcode": "",
             "tenure": tenure,
-            "saleType": "For Sale",
+            "saleType": sale_type,
         }
 
         print("*****" * 10)
@@ -144,6 +147,14 @@ class MuxworthyLLPScraper:
             size_ac = m.group(1)
 
         return size_ft, size_ac
+    
+    def normalize_sale_type(self, text):
+        t = text.lower()
+        if "sale" in t:
+            return "For Sale"
+        if "rent" in t or "to let" in t:
+            return "To Let"
+        return ""
 
     def extract_numeric_price(self, text):
         if not text:

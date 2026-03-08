@@ -11,9 +11,15 @@ from selenium.webdriver.support import expected_conditions as EC
 from lxml import html
 
 
-class MPRealEstateScraper:
-    BASE_URL = "https://www.mpre.co.uk/projects"
-    DOMAIN = "https://www.mpre.co.uk"
+class MpRealEstateScraper:
+    BASE_URL = "https://www.mprealestate.co.uk/projects.php"
+    DOMAIN = "https://www.mprealestate.co.uk"
+
+    # All h2 sections to scrape listings from
+    TARGET_SECTIONS = [
+        "New Developments / Available Properties",
+        "Investment Properties",
+    ]
 
     def __init__(self):
         self.results = []
@@ -45,14 +51,16 @@ class MPRealEstateScraper:
 
         tree = html.fromstring(self.driver.page_source)
 
-        section_cards = self.extract_section_cards(tree)
-        for card in section_cards:
-            try:
-                obj = self.parse_listing(card)
-                if obj:
-                    self.results.append(obj)
-            except Exception:
-                continue
+        # Scrape all target sections
+        for section_name in self.TARGET_SECTIONS:
+            section_cards = self.extract_section_cards(tree, section_name)
+            for card in section_cards:
+                try:
+                    obj = self.parse_listing(card)
+                    if obj:
+                        self.results.append(obj)
+                except Exception:
+                    continue
 
         self.driver.quit()
         return self.results
@@ -97,17 +105,17 @@ class MPRealEstateScraper:
 
     # ===================== SECTION EXTRACTOR ===================== #
 
-    def extract_section_cards(self, tree):
+    def extract_section_cards(self, tree, section_name):
         cards = []
 
-        headings = tree.xpath("//h2[normalize-space()='New Developments / Available Properties']")
+        headings = tree.xpath(f"//h2[normalize-space()='{section_name}']")
         if not headings:
             return cards
 
         section_heading = headings[0]
 
         for h3 in section_heading.xpath(
-            "./following-sibling::h3[preceding-sibling::h2[1][normalize-space()='New Developments / Available Properties']]"
+            f"./following-sibling::h3[preceding-sibling::h2[1][normalize-space()='{section_name}']]"
         ):
             title = self._clean(" ".join(h3.xpath(".//text()")))
             if not title:
@@ -115,6 +123,7 @@ class MPRealEstateScraper:
 
             description_parts = []
             brochure_urls = []
+            external_urls = []
             property_images = []
 
             node = h3.getnext()
@@ -129,8 +138,12 @@ class MPRealEstateScraper:
 
                 for href in node.xpath(".//a/@href"):
                     full = urljoin(self.DOMAIN, href)
-                    if ".pdf" in (href or "").lower() and full not in brochure_urls:
-                        brochure_urls.append(full)
+                    if ".pdf" in (href or "").lower():
+                        if full not in brochure_urls:
+                            brochure_urls.append(full)
+                    else:
+                        if full not in external_urls:
+                            external_urls.append(full)
 
                 for src in node.xpath(".//img/@src"):
                     full = urljoin(self.DOMAIN, src)
@@ -139,15 +152,22 @@ class MPRealEstateScraper:
 
                 node = node.getnext()
 
-            if not brochure_urls:
-                continue
+            # Determine best listing URL: PDF > external link > base URL
+            if brochure_urls:
+                listing_url = brochure_urls[0]
+            elif external_urls:
+                listing_url = external_urls[0]
+            else:
+                listing_url = self.BASE_URL
 
             cards.append({
                 "title": title,
                 "description": self._clean(" ".join(description_parts)),
                 "brochure_urls": brochure_urls,
+                "external_urls": external_urls,
                 "property_images": property_images,
-                "listing_url": brochure_urls[0],
+                "listing_url": listing_url,
+                "section": section_name,
             })
 
         return cards
