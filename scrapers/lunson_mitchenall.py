@@ -63,8 +63,8 @@ class LunsonMitchenallScraper:
                 if obj:
                     self.results.append(obj)
 
-            except Exception as e:
-                print("Error:", url, e)
+            except Exception:
+                pass
 
         self.driver.quit()
 

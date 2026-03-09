@@ -21,13 +21,14 @@ class HeaneyMicklethwaiteScraper:
         self.seen_urls = set()
 
         chrome_options = Options()
-        chrome_options.binary_location = "/usr/bin/chromium-browser"
+        # chrome_options.binary_location = "/usr/bin/chromium-browser"
         chrome_options.add_argument("--headless=new")
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--window-size=1920,1080")
 
-        service = Service("/usr/bin/chromedriver")
+        # service = Service("/usr/bin/chromedriver")
+        service = Service("C:/Users/educa/Downloads/ScrapyProject/ScrapyProject/chromedriver.exe")  #for windows
         self.driver = webdriver.Chrome(service=service, options=chrome_options)
         self.wait = WebDriverWait(self.driver, 20)
 
@@ -187,6 +188,9 @@ class HeaneyMicklethwaiteScraper:
             "tenure": tenure,
             "saleType": sale_type,
         }
+        print("*****"*10)
+        print(obj)
+        print("*****"*10)
         return obj
 
     # ===================== HELPERS ===================== #
