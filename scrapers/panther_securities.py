@@ -48,14 +48,13 @@ class PantherSecuritiesScraper:
             try:
                 self._scrape_category(category)
             except Exception as e:
-                print(f"Error scraping {category}: {e}")
                 continue
 
         # Scrape the investment / For Sale page
         try:
             self._scrape_for_sale()
-        except Exception as e:
-            print(f"Error scraping for-sale page: {e}")
+        except Exception:
+            pass
 
         return self.results
 
@@ -71,7 +70,6 @@ class PantherSecuritiesScraper:
         if not items:
             return
 
-        print(f"  [for-sale page] Found {len(items)} item(s)")
         self._parse_items(items, force_sale_type="For Sale")
 
     # ===================== SCRAPE ONE CATEGORY ===================== #
@@ -90,7 +88,6 @@ class PantherSecuritiesScraper:
         if not items:
             return
 
-        print(f"  [{category}] Found {len(items)} item(s)")
         self._parse_items(items)
 
     # ===================== PARSE ITEMS ===================== #
@@ -109,11 +106,8 @@ class PantherSecuritiesScraper:
                 self.seen_addresses.add(addr_key)
 
                 self.results.append(obj)
-                print("*****" * 10)
-                print(obj)
-                print("*****" * 10)
-            except Exception as e:
-                print(f"Error parsing item: {e}")
+
+            except Exception:
                 continue
 
     # ===================== ITEM PARSER ===================== #
@@ -363,4 +357,3 @@ class PantherSecuritiesScraper:
 if __name__ == "__main__":
     scraper = PantherSecuritiesScraper()
     results = scraper.run()
-    print(f"\nTotal listings scraped: {len(results)}")
